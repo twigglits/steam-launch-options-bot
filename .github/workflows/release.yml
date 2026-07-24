@@ -34,8 +34,33 @@ jobs:
           tar --exclude='__pycache__' \
               --transform "s,^,${name}/," \
               -czf "${name}.tar.gz" \
-              steamtrain systemd install.sh uninstall.sh README.md LICENSE
+              steamtrain steamtrain_gui systemd packaging install.sh uninstall.sh \
+              README.md LICENSE
           sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256"
+      - name: Install nfpm
+        run: |
+          curl -sL "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz" \
+            | tar xz -C /usr/local/bin nfpm
+          nfpm --version
+        env:
+          NFPM_VERSION: 2.47.0
+      - name: Build the package matrix
+        run: |
+          set -eu
+          mkdir -p dist
+          # Read the version without importing, so no __pycache__ is created that
+          # a directory glob could sweep into an artifact.
+          STEAMTRAIN_VERSION="${GITHUB_REF_NAME#v}"
+          export STEAMTRAIN_VERSION
+          for config in packaging/nfpm-core.yaml packaging/nfpm-gui.yaml; do
+            for format in deb rpm archlinux; do
+              nfpm package -f "$config" -p "$format" -t dist/
+            done
+          done
+          ls -l dist/
+      - name: Checksums for every artifact
+        run: |
+          cd dist && sha256sum ./* > SHA256SUMS && cat SHA256SUMS
       - name: Create GitHub Release and upload assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -49,4 +74,62 @@ jobs:
           fi
           gh release upload "${GITHUB_REF_NAME}" --clobber \
             "steamtrain-${GITHUB_REF_NAME}.tar.gz" \
-            "steamtrain-${GITHUB_REF_NAME}.tar.gz.sha256"
+            "steamtrain-${GITHUB_REF_NAME}.tar.gz.sha256" \
+            dist/*.deb dist/*.rpm dist/*.pkg.tar.zst dist/SHA256SUMS
+
+  # Separate job, and deliberately gated. The AUR key can overwrite a PKGBUILD
+  # that Arch users execute at install time, so it is a supply-chain credential
+  # rather than an ordinary deploy token: tag refs only, and an environment that
+  # can require a human approval before the push.
+  aur:
+    needs: release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment: aur
+    steps:
+      - uses: actions/checkout@v6
+      - name: Render the PKGBUILD for this tag
+        run: |
+          set -eu
+          version="${GITHUB_REF_NAME#v}"
+          url="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${GITHUB_REF_NAME}.tar.gz"
+          curl -sL "$url" -o source.tar.gz
+          sum=$(sha256sum source.tar.gz | cut -d' ' -f1)
+          sed -e "s/@VERSION@/${version}/g" -e "s/@SHA256@/${sum}/g" \
+            packaging/aur/PKGBUILD.in > PKGBUILD
+          cat PKGBUILD
+      - name: Generate .SRCINFO
+        run: |
+          # makepkg refuses to run as root and is not on the runner, so the
+          # .SRCINFO is produced inside an Arch container as a normal user.
+          docker run --rm -v "$PWD:/pkg" -w /pkg archlinux:latest bash -c '
+            pacman -Sy --noconfirm --needed base-devel >/dev/null 2>&1
+            useradd -m build && chown -R build /pkg
+            su build -c "makepkg --printsrcinfo" > .SRCINFO
+          '
+          cat .SRCINFO
+      - name: Push to the AUR
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          set -eu
+          install -m 700 -d ~/.ssh
+          install -m 600 /dev/stdin ~/.ssh/aur_ci <<< "$AUR_SSH_KEY"
+          # Pinned host key rather than a blind ssh-keyscan, which would trust
+          # whatever answers and undo the point of verifying it.
+          install -m 644 packaging/aur/known_hosts ~/.ssh/known_hosts
+          cat >> ~/.ssh/config <<'EOF'
+          Host aur.archlinux.org
+            User aur
+            IdentityFile ~/.ssh/aur_ci
+            IdentitiesOnly yes
+          EOF
+          git clone ssh://aur@aur.archlinux.org/steamtrain.git aur-repo
+          cp PKGBUILD .SRCINFO aur-repo/
+          cd aur-repo
+          git config user.name "steamtrain release bot"
+          git config user.email "twigglits@users.noreply.github.com"
+          git add PKGBUILD .SRCINFO
+          git diff --cached --quiet && { echo "AUR already up to date"; exit 0; }
+          git commit -m "Update to ${GITHUB_REF_NAME#v}"
+          git push

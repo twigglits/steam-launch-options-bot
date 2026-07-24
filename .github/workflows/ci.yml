@@ -21,3 +21,109 @@ jobs:
       - uses: actions/checkout@v6
       - name: ShellCheck shell scripts
         run: shellcheck install.sh uninstall.sh scripts/next-version.sh
+
+  boundaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Core stays stdlib-only, GUI never imports the Core
+        run: python3 scripts/check-boundaries.py
+
+  packaging:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install nfpm
+        run: |
+          curl -sL "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz" \
+            | tar xz -C /usr/local/bin nfpm
+        env:
+          NFPM_VERSION: 2.47.0
+      - name: Validate desktop entry and AppStream metadata
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq desktop-file-utils
+          desktop-file-validate packaging/steamtrain.desktop
+      - name: Build the package matrix
+        run: |
+          set -eu
+          mkdir -p dist
+          STEAMTRAIN_VERSION=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' steamtrain/__init__.py)
+          export STEAMTRAIN_VERSION
+          configs="packaging/nfpm-core.yaml"
+          if [ -d steamtrain_gui ]; then
+            configs="$configs packaging/nfpm-gui.yaml"
+          else
+            echo "::warning::steamtrain_gui/ is absent - the GUI package was NOT built or verified in this run"
+          fi
+          for config in $configs; do
+            for format in deb rpm archlinux; do
+              nfpm package -f "$config" -p "$format" -t dist/
+            done
+          done
+          ls -l dist/
+      - name: No __pycache__ may reach an artifact
+        run: |
+          set -eu
+          if dpkg-deb -c dist/steamtrain_*_all.deb | grep -q __pycache__; then
+            echo "__pycache__ found inside the package"; exit 1
+          fi
+          echo "artifacts are clean"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: dist/
+
+  gui-headless:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install PyQt6
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq python3-pyqt6
+      # ubuntu-latest ships PyQt6 6.6.1 bound against Qt 6.4.2, which is the
+      # same Qt floor Debian 12 has. Exercising the floor is the point: the
+      # supported spread runs to Qt 6.11 on Fedora and Arch, so testing only
+      # the newest would let a 6.5+ API slip in and break the oldest target.
+      - name: Report the Qt version actually under test
+        run: |
+          python3 -c "from PyQt6.QtCore import QT_VERSION_STR, PYQT_VERSION_STR; \
+            print(f'PyQt6 {PYQT_VERSION_STR} / Qt {QT_VERSION_STR}')"
+      - name: GUI test suite, headless
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python3 -m unittest discover -s tests -v
+
+  install-smoke:
+    needs: packaging
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: debian:13
+            install: apt-get update -qq && apt-get install -y -qq /dist/steamtrain_*_all.deb
+            remove: apt-get remove -y -qq steamtrain
+          - image: ubuntu:24.04
+            install: apt-get update -qq && apt-get install -y -qq /dist/steamtrain_*_all.deb
+            remove: apt-get remove -y -qq steamtrain
+          - image: fedora:latest
+            install: dnf install -y -q /dist/steamtrain-[0-9]*.noarch.rpm
+            remove: dnf remove -y -q steamtrain
+          - image: archlinux:latest
+            install: pacman -Sy --noconfirm >/dev/null && pacman -U --noconfirm /dist/steamtrain-[0-9]*-any.pkg.tar.zst
+            remove: pacman -R --noconfirm steamtrain
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: dist
+      - name: Install, verify inert, run, remove
+        run: |
+          docker run --rm \
+            -v "$PWD/dist:/dist:ro" \
+            -v "$PWD/scripts/verify-package.sh:/verify.sh:ro" \
+            "${{ matrix.image }}" \
+            sh /verify.sh "${{ matrix.install }}" "${{ matrix.remove }}"

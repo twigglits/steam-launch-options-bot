@@ -3,8 +3,10 @@
 import argparse
 import dataclasses
 import sys
+from pathlib import Path
 
-from . import __version__, apply as apply_mod, advisor, rules, steam, sysinfo
+from . import (__version__, apply as apply_mod, advisor, codes, doctor, jsonio,
+               rules, steam, sysinfo)
 
 
 def _build_parser():
@@ -25,6 +27,9 @@ def _build_parser():
         p.add_argument("--steam-root", default=None, help="Steam root (auto-detected)")
         p.add_argument("--config", default=rules.DEFAULT_CONFIG_PATH)
         p.add_argument("--state-dir", default=apply_mod.DEFAULT_STATE_DIR)
+        if name in ("scan", "apply", "status", "revert"):
+            p.add_argument("--json", action="store_true",
+                           help="machine-readable newline-delimited JSON on stdout")
         if name == "apply":
             p.add_argument("--dry-run", action="store_true", help="plan only, write nothing")
         if name == "advise":
@@ -36,16 +41,37 @@ def _build_parser():
     setup = sub.add_parser(
         "setup", help="confirm detected hardware; pick or clear the GPU vendor if wrong")
     setup.add_argument("--config", default=rules.DEFAULT_CONFIG_PATH)
+    setup.add_argument("--gpu-vendor", choices=("nvidia", "amd", "intel", "auto"),
+                       help="set the GPU vendor and exit without prompting "
+                            "('auto' clears the override and restores autodetection)")
+    setup.add_argument("--json", action="store_true",
+                       help="machine-readable newline-delimited JSON on stdout")
+    doc = sub.add_parser(
+        "doctor", help="diagnose install problems; --fix removes an old ~/.local install")
+    doc.add_argument("--fix", action="store_true", help="repair what can be repaired")
+    doc.add_argument("--dry-run", action="store_true",
+                     help="with --fix, list what would be removed and remove nothing")
+    doc.add_argument("--force", action="store_true",
+                     help="treat an old ~/.local install as a conflict even when no "
+                          "packaged install is present (used by install.sh --migrate)")
+    doc.add_argument("--json", action="store_true",
+                     help="machine-readable newline-delimited JSON on stdout")
     return parser
 
 
-def _context(args):
+def _emitter(args):
+    return jsonio.Emitter(enabled=getattr(args, "json", False))
+
+
+def _context(args, out=None):
     root = args.steam_root or steam.find_steam_root()
     if root is None:
-        print("ERROR: no Steam installation found", file=sys.stderr)
+        if out is not None and out.enabled:
+            out.result(False, codes.ERROR, guardrail=codes.NO_STEAM_ROOT,
+                       message="no Steam installation found")
+        else:
+            print("ERROR: no Steam installation found", file=sys.stderr)
         return None
-    from pathlib import Path
-
     return Path(root)
 
 
@@ -81,12 +107,57 @@ def _proposals(root, args):
     games = steam.installed_games(root)
     options = {}
     names = {}
+    excluded = []
     for game in games:
         opts = rules.build_options(game, profile, config)
         if opts is not None:
             options[game.appid] = opts
             names[game.appid] = game.name
-    return profile, games, options, names
+        else:
+            excluded.append(game.appid)
+    return profile, games, options, names, excluded
+
+
+_PROGRESS_EVERY = 50
+
+
+def _emit_profile(out, profile):
+    out.emit(jsonio.KIND_PROFILE, **dataclasses.asdict(profile))
+
+
+def _emit_games(out, games):
+    """Display metadata only; state lives on change records (AD-15)."""
+    for game in games:
+        out.emit(jsonio.KIND_GAME, appid=game.appid, name=game.name,
+                 runtime=game.runtime, library=str(game.library))
+
+
+def _excluded_records(root, excluded):
+    """One record per (user, appid) so exclusions share change identity.
+
+    The planner never sees these - build_options drops excluded games before
+    planning - so they are re-introduced here, which is what lets a client
+    show that an exclusion is being honoured rather than losing the game.
+    """
+    return [{"user": user, "appid": appid, "action": codes.EXCLUDED}
+            for user, _ in steam.user_localconfigs(root)
+            for appid in excluded]
+
+
+def _emit_changes(out, changes, extra=()):
+    """Emit every change record with progress, and return counts by action."""
+    records = [{"user": c.user, "appid": c.appid, "current": c.current,
+                "proposed": c.proposed, "action": c.action} for c in changes]
+    records.extend(extra)
+    total = len(records)
+    for index, record in enumerate(records, start=1):
+        out.emit(jsonio.KIND_CHANGE, **record)
+        if index % _PROGRESS_EVERY == 0 or index == total:
+            out.emit(jsonio.KIND_PROGRESS, done=index, total=total)
+    counts = {action: 0 for action in codes.ACTIONS}
+    for record in records:
+        counts[record["action"]] += 1
+    return counts
 
 
 def _print_changes(changes):
@@ -100,10 +171,20 @@ def _print_changes(changes):
 
 
 def cmd_scan(args):
-    root = _context(args)
+    out = _emitter(args)
+    root = _context(args, out)
     if root is None:
         return 1
-    profile, games, options, names = _proposals(root, args)
+    profile, games, options, names, excluded = _proposals(root, args)
+    if out.enabled:
+        state = apply_mod.State.load(args.state_dir)
+        changes = apply_mod.plan_changes(root, options, state, names)
+        _emit_profile(out, profile)
+        _emit_games(out, games)
+        counts = _emit_changes(out, changes, _excluded_records(root, excluded))
+        out.result(True, codes.OK, counts=counts,
+                   steam_running=steam.is_steam_running(root))
+        return 0
     print(f"System: {profile.distro} | {profile.desktop}/{profile.session} | "
           f"{profile.gpu_name} ({profile.gpu_vendor} {profile.gpu_driver}) | "
           f"gamemode={'yes' if profile.has_gamemode else 'no'} "
@@ -121,12 +202,15 @@ def cmd_scan(args):
 
 
 def cmd_apply(args):
-    root = _context(args)
+    out = _emitter(args)
+    root = _context(args, out)
     if root is None:
         return 1
-    _, games, options, names = _proposals(root, args)
+    profile, games, options, names, excluded = _proposals(root, args)
     state = apply_mod.State.load(args.state_dir)
     changes = apply_mod.plan_changes(root, options, state, names)
+    if out.enabled:
+        return _apply_json(out, args, root, profile, games, changes, excluded)
     _print_changes(changes)
     planned = [c for c in changes if c.action == "set"]
     if args.dry_run:
@@ -142,10 +226,20 @@ def cmd_apply(args):
 
 
 def cmd_status(args):
-    root = _context(args)
+    out = _emitter(args)
+    root = _context(args, out)
     if root is None:
         return 1
     state = apply_mod.State.load(args.state_dir)
+    if out.enabled:
+        # config_exists is probed directly and never through load_config, which
+        # creates the file as a side effect of reading it (AD-6). Reading status
+        # must not be what makes the first-run screen stop appearing.
+        out.result(True, codes.OK,
+                   config_exists=Path(args.config).is_file(),
+                   managed=dict(state.data),
+                   steam_running=steam.is_steam_running(root))
+        return 0
     if not state.data:
         print("No launch options are currently managed by this tool.")
         return 0
@@ -156,11 +250,17 @@ def cmd_status(args):
 
 
 def cmd_revert(args):
-    root = _context(args)
+    out = _emitter(args)
+    root = _context(args, out)
     if root is None:
         return 1
     state = apply_mod.State.load(args.state_dir)
     changes = apply_mod.plan_revert(root, state)
+    if out.enabled:
+        # No game records here: revert acts on state, which can hold appids that
+        # are no longer installed. Clients render those by appid (AD-15).
+        counts = _emit_changes(out, changes)
+        return _write_json(out, args, root, changes, counts)
     if not changes:
         print("Nothing to revert.")
         return 0
@@ -291,7 +391,36 @@ def _confirm(prompt):
         print("Please answer y or n.")
 
 
+def _apply_json(out, args, root, profile, games, changes, excluded):
+    _emit_profile(out, profile)
+    _emit_games(out, games)
+    counts = _emit_changes(out, changes, _excluded_records(root, excluded))
+    if args.dry_run:
+        out.result(True, codes.OK, counts=counts, dry_run=True,
+                   steam_running=steam.is_steam_running(root))
+        return 0
+    return _write_json(out, args, root, changes, counts)
+
+
+def _write_json(out, args, root, changes, counts):
+    """Execute planned changes and close the stream with the run outcome.
+
+    A guardrail refusal exits 0, not non-zero: Steam being open is the expected
+    case, and the timer must not record a failure for it (AD-7).
+    """
+    try:
+        written = apply_mod.apply_changes(root, changes, args.state_dir)
+    except apply_mod.SteamRunningError as exc:
+        out.result(False, codes.BLOCKED, guardrail=codes.STEAM_RUNNING,
+                   message=str(exc), counts=counts, written=0)
+        return 0
+    out.result(True, codes.OK, counts=counts, written=len(written))
+    return 0
+
+
 def cmd_setup(args):
+    if args.gpu_vendor is not None:
+        return _setup_noninteractive(args)
     profile = sysinfo.detect()
     config = rules.load_config(args.config)
     driver = f" {profile.gpu_driver}" if profile.gpu_driver else ""
@@ -306,6 +435,34 @@ def cmd_setup(args):
     except KeyboardInterrupt:
         print()
         return 130
+
+
+def _setup_noninteractive(args):
+    """Set the GPU vendor without prompting, for the desktop interface.
+
+    The interactive wizard cannot be driven by a GUI, and the GUI must not
+    write config.json itself - every write goes through the Core. 'auto'
+    clears the override rather than storing a literal, so autodetection
+    resumes.
+    """
+    out = _emitter(args)
+    vendor = "" if args.gpu_vendor == "auto" else args.gpu_vendor
+    try:
+        rules.save_gpu_vendor(args.config, vendor)
+    except OSError as exc:
+        if out.enabled:
+            out.result(False, codes.ERROR, message=f"could not write {args.config}: {exc}")
+        else:
+            print(f"ERROR: could not write {args.config}: {exc}", file=sys.stderr)
+        return 1
+    if out.enabled:
+        out.result(True, codes.OK, gpu_vendor=vendor,
+                   config_path=str(args.config))
+    elif vendor:
+        print(f"Saved gpu_vendor={vendor!r} to {args.config}.")
+    else:
+        print(f"Cleared gpu_vendor in {args.config}; autodetection is back in effect.")
+    return 0
 
 
 def _setup_interact(args, profile, override):
@@ -365,18 +522,100 @@ def _setup_interact(args, profile, override):
     return 0
 
 
+def _emit_findings(out, findings, stream=None):
+    for finding in findings:
+        if out.enabled:
+            out.emit(jsonio.KIND_FINDING, code=finding.code,
+                     message=finding.message, paths=finding.paths,
+                     fixable=finding.fixable)
+        else:
+            print(f"PROBLEM: {finding.message}.", file=stream)
+            for path in finding.paths:
+                print(f"         {path}", file=stream)
+
+
+def cmd_doctor(args):
+    out = _emitter(args)
+    findings = doctor.diagnose(force=args.force)
+    if not findings:
+        if out.enabled:
+            out.result(True, codes.OK, findings=0, fixed=0)
+        else:
+            print("No problems found.")
+        return 0
+
+    _emit_findings(out, findings)
+    if not args.fix:
+        if out.enabled:
+            out.result(False, codes.ERROR, findings=len(findings), fixed=0,
+                       message="run `steamtrain doctor --fix` to repair")
+        else:
+            print("\nRun `steamtrain doctor --fix` to repair.")
+        return 2
+
+    removed, failed = doctor.migrate(dry_run=args.dry_run)
+    if out.enabled:
+        ok = not failed and not args.dry_run
+        out.result(ok, codes.OK if ok else codes.ERROR,
+                   findings=len(findings), fixed=0 if args.dry_run else len(removed),
+                   removed=[{"path": path, "detail": detail} for path, detail in removed],
+                   failed=[{"path": path, "error": error} for path, error in failed],
+                   dry_run=args.dry_run)
+    else:
+        for path, detail in removed:
+            print(f"  {detail}: {path}")
+        for path, error in failed:
+            print(f"  FAILED: {path}: {error}", file=sys.stderr)
+        if args.dry_run:
+            print("\ndry-run: nothing was removed")
+        elif failed:
+            print("\nMigration incomplete; the paths above still need removing.",
+                  file=sys.stderr)
+        else:
+            print("\nMigrated. Configuration and state were left untouched.")
+    return 2 if (failed or args.dry_run) else 0
+
+
+def _warn_legacy(args):
+    """FR-9: a shadowed install must never run silently.
+
+    Cheap on a healthy machine - diagnose() returns immediately when no
+    packaged install exists, which is every developer checkout.
+    """
+    try:
+        findings = doctor.diagnose()
+    except OSError:
+        return
+    if not findings:
+        return
+    out = _emitter(args)
+    _emit_findings(out, findings, stream=sys.stderr)
+    if not out.enabled:
+        print("         The packaged install is not the code being run.",
+              file=sys.stderr)
+        print("         Fix automatically: steamtrain doctor --fix", file=sys.stderr)
+
+
 COMMANDS = {
     "scan": cmd_scan, "apply": cmd_apply, "status": cmd_status,
     "revert": cmd_revert, "advise": cmd_advise, "setup": cmd_setup,
+    "doctor": cmd_doctor,
 }
 
 
 def main(argv=None):
     args = _build_parser().parse_args(argv)
+    if args.command != "doctor":
+        _warn_legacy(args)
     try:
         return COMMANDS[args.command](args)
     except rules.ConfigError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        out = _emitter(args)
+        if out.enabled:
+            out.result(False, codes.ERROR, guardrail=codes.CONFIG_INVALID,
+                       message=str(exc))
+        else:
+            print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
 

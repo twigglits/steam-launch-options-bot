@@ -1,0 +1,89 @@
+# GUI package: settings window and tray applet.
+#
+# Separate from the Core so that CLI, headless and server users never pull in
+# ~150MB of Qt, and so the licences stay separable: the Core is MIT with no
+# dependencies, while this package links PyQt6 and is therefore GPL-3.0.
+#
+# PyQt6 rather than PySide6 because PySide6 is absent from Ubuntu 24.04 LTS.
+# The binding is named differently per family, hence the overrides.
+#
+#   nfpm package -f packaging/nfpm-gui.yaml -p deb -t dist/
+name: steamtrain-gui
+arch: all
+platform: linux
+version: ${STEAMTRAIN_VERSION}
+section: games
+priority: optional
+maintainer: twigglits <twigglits@users.noreply.github.com>
+vendor: twigglits
+homepage: https://github.com/twigglits/steamtrain
+license: GPL-3.0-or-later
+description: |
+  Desktop interface for steamtrain.
+  Confirms what steamtrain detected about your machine, switches the automatic
+  timer on, shows whether Steam is currently blocking a write, and lists the
+  launch options proposed for each installed game before anything is written.
+  .
+  The settings window is the primary entry point and is sufficient on its own.
+  The tray icon is a convenience and is absent on desktops that have no system
+  tray, such as stock GNOME.
+
+# The exact-version pin matters: the GUI speaks a versioned wire protocol to
+# the Core, so a mismatched pair must fail at install time rather than at
+# parse time.
+depends:
+  - steamtrain (= ${STEAMTRAIN_VERSION})
+  - python3-pyqt6
+
+overrides:
+  rpm:
+    depends:
+      - steamtrain = ${STEAMTRAIN_VERSION}
+      - python3-pyqt6
+  archlinux:
+    depends:
+      - steamtrain=${STEAMTRAIN_VERSION}
+      - python-pyqt6
+
+contents:
+  # Owned explicitly so rpm removes it; see the note in nfpm-core.yaml.
+  # /usr/lib/steamtrain itself is owned by the Core package, which this one
+  # depends on, so it is deliberately not re-declared here.
+  - dst: /usr/lib/steamtrain/steamtrain_gui
+    type: dir
+
+  # Globbed: see the note in nfpm-core.yaml.
+  - src: ./steamtrain_gui/*.py
+    dst: /usr/lib/steamtrain/steamtrain_gui/
+
+  - src: ./packaging/steamtrain-gui
+    dst: /usr/bin/steamtrain-gui
+    file_info:
+      mode: 0755
+
+  - src: ./packaging/steamtrain.desktop
+    dst: /usr/share/applications/steamtrain.desktop
+  - src: ./packaging/steamtrain.metainfo.xml
+    dst: /usr/share/metainfo/io.github.twigglits.steamtrain.metainfo.xml
+
+  - src: ./packaging/icons/steamtrain.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/steamtrain.svg
+  - src: ./packaging/icons/16x16.png
+    dst: /usr/share/icons/hicolor/16x16/apps/steamtrain.png
+  - src: ./packaging/icons/22x22.png
+    dst: /usr/share/icons/hicolor/22x22/apps/steamtrain.png
+  - src: ./packaging/icons/24x24.png
+    dst: /usr/share/icons/hicolor/24x24/apps/steamtrain.png
+  - src: ./packaging/icons/32x32.png
+    dst: /usr/share/icons/hicolor/32x32/apps/steamtrain.png
+  - src: ./packaging/icons/48x48.png
+    dst: /usr/share/icons/hicolor/48x48/apps/steamtrain.png
+  - src: ./packaging/icons/64x64.png
+    dst: /usr/share/icons/hicolor/64x64/apps/steamtrain.png
+  - src: ./packaging/icons/128x128.png
+    dst: /usr/share/icons/hicolor/128x128/apps/steamtrain.png
+  - src: ./packaging/icons/256x256.png
+    dst: /usr/share/icons/hicolor/256x256/apps/steamtrain.png
+
+  - src: ./packaging/LICENSE.gui
+    dst: /usr/share/doc/steamtrain-gui/LICENSE

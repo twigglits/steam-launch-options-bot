@@ -7,6 +7,32 @@ LIB_DIR="$HOME/.local/lib/steamtrain"
 BIN_DIR="$HOME/.local/bin"
 UNIT_DIR="$HOME/.config/systemd/user"
 
+usage() {
+    echo "usage: $0 [--migrate]"
+    echo "  --migrate  remove a previous ~/.local install and exit, installing nothing."
+    echo "             Use this when switching to a distribution package. Your config"
+    echo "             and state are preserved."
+}
+
+# --migrate delegates to `steamtrain doctor`, which owns the removal allowlist.
+# Duplicating that list in shell is how the two copies drift apart and one of
+# them eventually deletes state.json.
+if [ $# -gt 0 ]; then
+    case "$1" in
+        --migrate)
+            if ! command -v python3 >/dev/null 2>&1; then
+                echo "ERROR: python3 is required for --migrate." >&2
+                exit 1
+            fi
+            PYTHONPATH="$REPO_DIR${PYTHONPATH:+:$PYTHONPATH}" \
+                python3 -m steamtrain doctor --fix --force
+            exit $?
+            ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "ERROR: unknown option $1" >&2; usage >&2; exit 1 ;;
+    esac
+fi
+
 distro_ids() {
     # Emit "ID ID_LIKE" from os-release for matching; empty if unavailable.
     # Parsed rather than sourced: os-release is shell syntax, so sourcing it
@@ -57,8 +83,12 @@ chmod +x "$BIN_DIR/steamtrain"
 # instead of aborting a half-finished install under `set -eu`.
 systemd_ok=0
 if command -v systemctl >/dev/null 2>&1 && systemctl --user daemon-reload 2>/dev/null; then
-    if cp "$REPO_DIR/systemd/steamtrain.service" \
-          "$REPO_DIR/systemd/steamtrain.timer" "$UNIT_DIR/" \
+    # The shipped unit targets /usr/bin, which is where a distribution package
+    # puts the binary. This install puts it in ~/.local, so the ExecStart is
+    # rewritten on the way in rather than maintaining a second copy of the unit.
+    if sed 's,^ExecStart=/usr/bin/steamtrain ,ExecStart=%h/.local/bin/steamtrain ,' \
+           "$REPO_DIR/systemd/steamtrain.service" > "$UNIT_DIR/steamtrain.service" \
+        && cp "$REPO_DIR/systemd/steamtrain.timer" "$UNIT_DIR/" \
         && systemctl --user daemon-reload 2>/dev/null \
         && systemctl --user enable --now steamtrain.timer 2>/dev/null; then
         systemd_ok=1

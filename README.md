@@ -57,6 +57,57 @@ known to break games (e.g. it never forces `SDL_VIDEODRIVER=wayland`).
 
 ## Install
 
+### From a package (recommended)
+
+Download the artifacts for your distribution from the
+[latest release](https://github.com/twigglits/steamtrain/releases/latest):
+
+```sh
+sudo apt install ./steamtrain_*_all.deb          # Debian, Ubuntu
+sudo dnf install ./steamtrain-*.noarch.rpm       # Fedora
+sudo pacman -U ./steamtrain-*-any.pkg.tar.zst    # Arch
+```
+
+Arch users can instead get updates through the AUR:
+
+```sh
+yay -S steamtrain          # CLI only
+yay -S steamtrain-gui      # CLI + desktop interface
+```
+
+Add `steamtrain-gui` for the desktop interface — a settings window in your
+application menu, plus a tray icon on desktops that have a system tray.
+
+**Installing a package does nothing on its own.** It writes no files into your
+home directory and schedules nothing. Turn the timer on yourself, either in the
+settings window or with:
+
+```sh
+systemctl --user enable --now steamtrain.timer
+```
+
+Restart Steam to see applied options take effect in the UI.
+
+> Ubuntu 22.04 can install the CLI package but not `steamtrain-gui`: jammy has
+> no `python3-pyqt6`.
+
+### Already installed with `install.sh`?
+
+An older `~/.local` install **silently wins** over a packaged one — `~/.local/bin`
+comes before `/usr/bin` in `PATH`, and a user unit overrides the packaged one — so
+the package you just installed would not actually be the code running. steamtrain
+detects this and tells you. To clear it out:
+
+```sh
+steamtrain doctor          # report what is conflicting
+steamtrain doctor --fix    # remove the old install
+```
+
+Your config and state are preserved; only the old executables and unit files
+are removed.
+
+### From source, or on other distributions
+
 ```sh
 ./install.sh
 ```
@@ -65,6 +116,9 @@ This copies the package to `~/.local/lib/steamtrain`, a `steamtrain`
 launcher to `~/.local/bin`, and installs + starts a systemd **user** timer
 (2 min after boot, then every 30 min — new installs get options
 automatically). Restart Steam to see applied options take effect in the UI.
+
+`./install.sh --migrate` removes a previous `~/.local` install and exits
+without installing anything, for switching to a distribution package.
 
 The installer checks for `python3` first (printing a per-distro install hint
 if it is missing — `pacman`/`dnf`/`apt`, never run for you). If there is no
@@ -96,7 +150,21 @@ steamtrain revert           # restore managed options to empty
 steamtrain advise            # list installed games (no appid to look up)
 steamtrain advise witcher    # LLM-propose an override, matched by game name (review only)
 steamtrain advise witcher --write   # save the reviewed proposal into overrides
+steamtrain doctor           # report install problems (exits 2 if any are unfixed)
+steamtrain doctor --fix     # remove a conflicting old ~/.local install
 ```
+
+`scan`, `apply`, `status` and `revert` also accept `--json`, which emits
+newline-delimited JSON instead of text — one object per line, the last one
+always a `result` record. That is how the desktop interface talks to the CLI,
+and it is stable enough to script against:
+
+```sh
+steamtrain apply --dry-run --json | jq -c 'select(.kind == "change" and .action == "set")'
+```
+
+A run blocked because Steam is open still exits `0` — that is the expected
+case, not a failure — and reports `"outcome": "blocked"` in the result record.
 
 `steamtrain setup` (also run automatically at the end of an interactive
 install) prints the autodetected hardware profile and asks you to confirm it

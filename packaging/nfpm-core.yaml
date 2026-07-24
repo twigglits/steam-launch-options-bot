@@ -1,0 +1,74 @@
+# Core package: CLI, rule engine, systemd user units.
+#
+# One config, every format. Only the dependency names differ between package
+# families, which is what the `overrides` block is for.
+#
+# This package has no runtime dependency beyond python3, and that is a hard
+# constraint rather than a preference: it is what makes steamtrain installable
+# and auditable everywhere, and what lets a headless or CLI-only user avoid
+# pulling in Qt.
+#
+#   nfpm package -f packaging/nfpm-core.yaml -p deb -t dist/
+name: steamtrain
+arch: all
+platform: linux
+version: ${STEAMTRAIN_VERSION}
+section: games
+priority: optional
+maintainer: twigglits <twigglits@users.noreply.github.com>
+vendor: twigglits
+homepage: https://github.com/twigglits/steamtrain
+license: MIT
+description: |
+  Set hardware-appropriate Steam launch options for installed games.
+  Scans the games you actually have on disk and generates conservative launch
+  options for your own GPU, session type and helper tools, instead of copying
+  options reported from someone else's hardware. Never overwrites an option
+  you set yourself, never writes while Steam is running, backs up before every
+  write, and can revert everything it did.
+  .
+  Removing this package does not clear launch options it already set. Run
+  `steamtrain revert` first if you want them cleared.
+
+depends:
+  - python3 (>= 3.7)
+
+overrides:
+  rpm:
+    depends:
+      - python3 >= 3.7
+  archlinux:
+    depends:
+      - python>=3.7
+
+contents:
+  # Declared explicitly so the package OWNS these directories. Without this,
+  # rpm leaves them behind as empty directories on removal (dpkg happens to
+  # clean up after itself, so this only shows up on Fedora).
+  - dst: /usr/lib/steamtrain
+    type: dir
+  - dst: /usr/lib/steamtrain/steamtrain
+    type: dir
+
+  # Globbed rather than copying the directory, so a stray __pycache__ from a
+  # local test run can never end up inside a release artifact.
+  - src: ./steamtrain/*.py
+    dst: /usr/lib/steamtrain/steamtrain/
+
+  - src: ./packaging/steamtrain
+    dst: /usr/bin/steamtrain
+    file_info:
+      mode: 0755
+
+  # Shipped, never enabled. Activation is per-user and happens only when the
+  # user asks for it: a system package must not schedule writes to every
+  # account's Steam configuration.
+  - src: ./systemd/steamtrain.service
+    dst: /usr/lib/systemd/user/steamtrain.service
+  - src: ./systemd/steamtrain.timer
+    dst: /usr/lib/systemd/user/steamtrain.timer
+
+  - src: ./LICENSE
+    dst: /usr/share/doc/steamtrain/LICENSE
+  - src: ./README.md
+    dst: /usr/share/doc/steamtrain/README.md
