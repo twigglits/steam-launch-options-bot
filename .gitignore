@@ -3,3 +3,8 @@ __pycache__/
 .superpowers/
 .pytest_cache/
 docs/superpowers/
+
+# BMAD tooling state and planning artifacts (not project source)
+_bmad/
+_bmad-output/
+.claude/
