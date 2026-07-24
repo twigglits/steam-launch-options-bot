@@ -109,10 +109,10 @@ jobs:
             install: apt-get update -qq && apt-get install -y -qq /dist/steamtrain_*_all.deb
             remove: apt-get remove -y -qq steamtrain
           - image: fedora:latest
-            install: dnf install -y -q /dist/steamtrain-*.noarch.rpm
+            install: dnf install -y -q /dist/steamtrain-[0-9]*.noarch.rpm
             remove: dnf remove -y -q steamtrain
           - image: archlinux:latest
-            install: pacman -Sy --noconfirm >/dev/null && pacman -U --noconfirm /dist/steamtrain-*-any.pkg.tar.zst
+            install: pacman -Sy --noconfirm >/dev/null && pacman -U --noconfirm /dist/steamtrain-[0-9]*-any.pkg.tar.zst
             remove: pacman -R --noconfirm steamtrain
     steps:
       - uses: actions/checkout@v6
