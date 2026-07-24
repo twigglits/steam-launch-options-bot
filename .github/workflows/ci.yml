@@ -74,6 +74,23 @@ jobs:
           name: packages
           path: dist/
 
+  gui-headless:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install PyQt6
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq python3-pyqt6
+      - name: Report the Qt version actually under test
+        run: |
+          python3 -c "from PyQt6.QtCore import QT_VERSION_STR, PYQT_VERSION_STR; \
+            print(f'PyQt6 {PYQT_VERSION_STR} / Qt {QT_VERSION_STR}')"
+      - name: GUI test suite, headless
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python3 -m unittest discover -s tests -v
+
   install-smoke:
     needs: packaging
     runs-on: ubuntu-latest

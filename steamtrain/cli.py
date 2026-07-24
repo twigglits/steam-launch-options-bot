@@ -41,6 +41,11 @@ def _build_parser():
     setup = sub.add_parser(
         "setup", help="confirm detected hardware; pick or clear the GPU vendor if wrong")
     setup.add_argument("--config", default=rules.DEFAULT_CONFIG_PATH)
+    setup.add_argument("--gpu-vendor", choices=("nvidia", "amd", "intel", "auto"),
+                       help="set the GPU vendor and exit without prompting "
+                            "('auto' clears the override and restores autodetection)")
+    setup.add_argument("--json", action="store_true",
+                       help="machine-readable newline-delimited JSON on stdout")
     doc = sub.add_parser(
         "doctor", help="diagnose install problems; --fix removes an old ~/.local install")
     doc.add_argument("--fix", action="store_true", help="repair what can be repaired")
@@ -414,6 +419,8 @@ def _write_json(out, args, root, changes, counts):
 
 
 def cmd_setup(args):
+    if args.gpu_vendor is not None:
+        return _setup_noninteractive(args)
     profile = sysinfo.detect()
     config = rules.load_config(args.config)
     driver = f" {profile.gpu_driver}" if profile.gpu_driver else ""
@@ -428,6 +435,34 @@ def cmd_setup(args):
     except KeyboardInterrupt:
         print()
         return 130
+
+
+def _setup_noninteractive(args):
+    """Set the GPU vendor without prompting, for the desktop interface.
+
+    The interactive wizard cannot be driven by a GUI, and the GUI must not
+    write config.json itself - every write goes through the Core. 'auto'
+    clears the override rather than storing a literal, so autodetection
+    resumes.
+    """
+    out = _emitter(args)
+    vendor = "" if args.gpu_vendor == "auto" else args.gpu_vendor
+    try:
+        rules.save_gpu_vendor(args.config, vendor)
+    except OSError as exc:
+        if out.enabled:
+            out.result(False, codes.ERROR, message=f"could not write {args.config}: {exc}")
+        else:
+            print(f"ERROR: could not write {args.config}: {exc}", file=sys.stderr)
+        return 1
+    if out.enabled:
+        out.result(True, codes.OK, gpu_vendor=vendor,
+                   config_path=str(args.config))
+    elif vendor:
+        print(f"Saved gpu_vendor={vendor!r} to {args.config}.")
+    else:
+        print(f"Cleared gpu_vendor in {args.config}; autodetection is back in effect.")
+    return 0
 
 
 def _setup_interact(args, profile, override):

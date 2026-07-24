@@ -155,6 +155,55 @@ def _default_runner(argv, timeout):
     return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
 
 
+def stream(args, on_record=None, executable="steamtrain", popen=None):
+    """Run a CLI command, delivering each record as it arrives.
+
+    This is the reason the wire format is newline-delimited rather than one
+    blob: an apply across a few hundred (user, appid) pairs must report
+    progress while it works instead of going silent until it exits.
+
+    `on_record` is called from the calling thread for every record, and must
+    not raise. Returns the completed Run, with the same truncation check as
+    run().
+    """
+    argv = [find_core(executable), *args, "--json"]
+    opener = popen or _default_popen
+    records = []
+    with opener(argv) as process:
+        for number, line in enumerate(process.stdout, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except ValueError as exc:
+                raise ProtocolError(f"line {number} is not JSON: {exc}") from exc
+            if not isinstance(record, dict):
+                raise ProtocolError(f"line {number} is not a JSON object")
+            version = record.get("v")
+            if version is not None and version > PROTOCOL_VERSION:
+                raise ProtocolError(
+                    f"the installed steamtrain speaks wire format v{version}, "
+                    f"but this interface understands v{PROTOCOL_VERSION}. The "
+                    f"two packages are mismatched; install matching versions.")
+            records.append(record)
+            if on_record is not None:
+                on_record(record)
+        stderr = process.stderr.read() if process.stderr else ""
+    result = Run(records, process.returncode, stderr)
+    if result.result is None:
+        raise ProtocolError(
+            "the Core's output ended without a result record, so the run was "
+            "cut short and its outcome is unknown"
+            + (f" (stderr: {stderr.strip()})" if stderr.strip() else ""))
+    return result
+
+
+def _default_popen(argv):
+    return subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, bufsize=1)
+
+
 def core_version(executable="steamtrain", runner=None):
     """Version string of the installed Core, for the parity check."""
     runner = runner or _default_runner
