@@ -10,28 +10,15 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-try:
-    from PyQt6.QtGui import QIcon
-    from PyQt6.QtWidgets import QApplication
-    HAVE_QT = True
-except ImportError:  # the GUI package is optional
-    HAVE_QT = False
+from tests.qtapp import HAVE_QT, ensure_app
 
 if HAVE_QT:
+    from PyQt6.QtGui import QIcon
     from steamtrain_gui import client, models, tray as tray_mod, window
-
-_app = None
 
 
 def setUpModule():
-    global _app
-    if HAVE_QT:
-        _app = QApplication.instance() or QApplication(["tests"])
-
-
-def tearDownModule():
-    global _app
-    _app = None
+    ensure_app()
 
 
 def run_with(*records):

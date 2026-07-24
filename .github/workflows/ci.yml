@@ -82,6 +82,10 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq python3-pyqt6
+      # ubuntu-latest ships PyQt6 6.6.1 bound against Qt 6.4.2, which is the
+      # same Qt floor Debian 12 has. Exercising the floor is the point: the
+      # supported spread runs to Qt 6.11 on Fedora and Arch, so testing only
+      # the newest would let a 6.5+ API slip in and break the oldest target.
       - name: Report the Qt version actually under test
         run: |
           python3 -c "from PyQt6.QtCore import QT_VERSION_STR, PYQT_VERSION_STR; \
