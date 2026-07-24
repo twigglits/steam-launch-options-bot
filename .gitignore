@@ -8,3 +8,6 @@ docs/superpowers/
 _bmad/
 _bmad-output/
 .claude/
+
+# Build artifacts
+dist/

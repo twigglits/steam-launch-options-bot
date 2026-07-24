@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=steamtrain
+GenericName=Steam Launch Options
+Comment=Set hardware-appropriate Steam launch options for your installed games
+Exec=steamtrain-gui
+Icon=steamtrain
+Terminal=false
+Categories=Game;Settings;
+Keywords=steam;proton;launch;options;gaming;gpu;gamemode;
+StartupNotify=true
+StartupWMClass=steamtrain-gui

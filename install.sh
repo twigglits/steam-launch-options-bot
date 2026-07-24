@@ -83,8 +83,12 @@ chmod +x "$BIN_DIR/steamtrain"
 # instead of aborting a half-finished install under `set -eu`.
 systemd_ok=0
 if command -v systemctl >/dev/null 2>&1 && systemctl --user daemon-reload 2>/dev/null; then
-    if cp "$REPO_DIR/systemd/steamtrain.service" \
-          "$REPO_DIR/systemd/steamtrain.timer" "$UNIT_DIR/" \
+    # The shipped unit targets /usr/bin, which is where a distribution package
+    # puts the binary. This install puts it in ~/.local, so the ExecStart is
+    # rewritten on the way in rather than maintaining a second copy of the unit.
+    if sed 's,^ExecStart=/usr/bin/steamtrain ,ExecStart=%h/.local/bin/steamtrain ,' \
+           "$REPO_DIR/systemd/steamtrain.service" > "$UNIT_DIR/steamtrain.service" \
+        && cp "$REPO_DIR/systemd/steamtrain.timer" "$UNIT_DIR/" \
         && systemctl --user daemon-reload 2>/dev/null \
         && systemctl --user enable --now steamtrain.timer 2>/dev/null; then
         systemd_ok=1

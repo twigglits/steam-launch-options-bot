@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="steamtrain: a brass steam valve handwheel with a puff of steam">
+  <title>steamtrain</title>
+  <!-- Square app icon drawn from the mascot's central motif: the brass steam
+       gate-valve handwheel. Kept to a bold silhouette with no fine detail so
+       it stays legible at 16px, and outlined in a dark stroke so it reads on
+       both light and dark shelf backgrounds. -->
+  <defs>
+    <linearGradient id="brass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f0c060"/>
+      <stop offset="1" stop-color="#b07818"/>
+    </linearGradient>
+  </defs>
+
+  <!-- steam puff, offset so it survives being clipped by round icon masks -->
+  <g fill="#dfe8ef" stroke="#6a7a86" stroke-width="1.5" opacity="0.95">
+    <circle cx="47" cy="13" r="5"/>
+    <circle cx="55" cy="10" r="3.5"/>
+  </g>
+
+  <g stroke="#3a2a10" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">
+    <!-- spokes, drawn under the rim so the joins stay clean -->
+    <g stroke="url(#brass)" stroke-width="6">
+      <path d="M30 30 L30 8"/>
+      <path d="M30 30 L49 41"/>
+      <path d="M30 30 L11 41"/>
+    </g>
+    <!-- rim -->
+    <circle cx="30" cy="30" r="22" fill="none" stroke="url(#brass)" stroke-width="7"/>
+    <circle cx="30" cy="30" r="22" fill="none" stroke="#3a2a10" stroke-width="2" opacity="0.55"/>
+    <!-- hub -->
+    <circle cx="30" cy="30" r="7" fill="url(#brass)" stroke="#3a2a10" stroke-width="2"/>
+  </g>
+</svg>

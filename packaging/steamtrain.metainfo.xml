@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.twigglits.steamtrain</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>steamtrain</name>
+  <summary>Set hardware-appropriate Steam launch options</summary>
+  <description>
+    <p>
+      steamtrain scans the Steam games you actually have installed and sets
+      launch options suited to your own hardware, desktop session and helper
+      tools, rather than copying options submitted from someone else's machine.
+    </p>
+    <p>It is deliberately conservative and never acts behind your back:</p>
+    <ul>
+      <li>It never overwrites a launch option you set yourself.</li>
+      <li>It never writes while Steam is running, because Steam would discard the change on exit.</li>
+      <li>It backs up localconfig.vdf before every write and can revert everything it did.</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">steamtrain.desktop</launchable>
+  <url type="homepage">https://github.com/twigglits/steamtrain</url>
+  <url type="bugtracker">https://github.com/twigglits/steamtrain/issues</url>
+  <developer id="io.github.twigglits">
+    <name>twigglits</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+</component>

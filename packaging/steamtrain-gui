@@ -1,0 +1,4 @@
+#!/bin/sh
+# System launcher for the desktop application.
+export PYTHONPATH="/usr/lib/steamtrain${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 -m steamtrain_gui "$@"

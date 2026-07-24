@@ -1,0 +1,64 @@
+# Maintainer: twigglits <twigglits@users.noreply.github.com>
+#
+# Template. The release workflow renders @VERSION@ and @SHA256@ and pushes the
+# result to the AUR; do not edit the rendered PKGBUILD by hand, or the next
+# release will silently overwrite the change.
+#
+# A split package rather than two AUR repositories: one source tarball builds
+# both, so the CLI and the GUI can never drift to different versions in the
+# AUR, which is exactly the mismatch the GUI refuses to run against.
+pkgbase=steamtrain
+pkgname=('steamtrain' 'steamtrain-gui')
+pkgver=@VERSION@
+pkgrel=1
+arch=('any')
+url="https://github.com/twigglits/steamtrain"
+license=('MIT')
+makedepends=('python')
+source=("$pkgbase-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('@SHA256@')
+
+package_steamtrain() {
+  pkgdesc="Set hardware-appropriate Steam launch options for installed games"
+  depends=('python>=3.7')
+  cd "$srcdir/$pkgbase-$pkgver"
+
+  install -d "$pkgdir/usr/lib/steamtrain/steamtrain"
+  install -Dm644 steamtrain/*.py -t "$pkgdir/usr/lib/steamtrain/steamtrain/"
+  install -Dm755 packaging/steamtrain "$pkgdir/usr/bin/steamtrain"
+
+  # Shipped, never enabled: activation is per-user and only on request.
+  install -Dm644 systemd/steamtrain.service \
+    "$pkgdir/usr/lib/systemd/user/steamtrain.service"
+  install -Dm644 systemd/steamtrain.timer \
+    "$pkgdir/usr/lib/systemd/user/steamtrain.timer"
+
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/steamtrain/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/steamtrain/README.md"
+}
+
+package_steamtrain-gui() {
+  pkgdesc="Desktop interface for steamtrain"
+  license=('GPL-3.0-or-later')
+  depends=("steamtrain=$pkgver" 'python-pyqt6')
+  cd "$srcdir/$pkgbase-$pkgver"
+
+  install -d "$pkgdir/usr/lib/steamtrain/steamtrain_gui"
+  install -Dm644 steamtrain_gui/*.py -t "$pkgdir/usr/lib/steamtrain/steamtrain_gui/"
+  install -Dm755 packaging/steamtrain-gui "$pkgdir/usr/bin/steamtrain-gui"
+
+  install -Dm644 packaging/steamtrain.desktop \
+    "$pkgdir/usr/share/applications/steamtrain.desktop"
+  install -Dm644 packaging/steamtrain.metainfo.xml \
+    "$pkgdir/usr/share/metainfo/io.github.twigglits.steamtrain.metainfo.xml"
+
+  install -Dm644 packaging/icons/steamtrain.svg \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/steamtrain.svg"
+  for size in 16 22 24 32 48 64 128 256; do
+    install -Dm644 "packaging/icons/${size}x${size}.png" \
+      "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/steamtrain.png"
+  done
+
+  install -Dm644 packaging/LICENSE.gui \
+    "$pkgdir/usr/share/licenses/steamtrain-gui/LICENSE"
+}
