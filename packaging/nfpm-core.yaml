@@ -37,9 +37,6 @@ overrides:
   rpm:
     depends:
       - python3 >= 3.7
-  archlinux:
-    depends:
-      - python>=3.7
 
 contents:
   # Declared explicitly so the package OWNS these directories. Without this,

@@ -65,18 +65,13 @@ Download the artifacts for your distribution from the
 ```sh
 sudo apt install ./steamtrain_*_all.deb          # Debian, Ubuntu
 sudo dnf install ./steamtrain-*.noarch.rpm       # Fedora
-sudo pacman -U ./steamtrain-*-any.pkg.tar.zst    # Arch
-```
-
-Arch users can instead get updates through the AUR:
-
-```sh
-yay -S steamtrain          # CLI only
-yay -S steamtrain-gui      # CLI + desktop interface
 ```
 
 Add `steamtrain-gui` for the desktop interface — a settings window in your
 application menu, plus a tray icon on desktops that have a system tray.
+
+On Arch and other distributions without a package, install from source
+(below).
 
 **Installing a package does nothing on its own.** It writes no files into your
 home directory and schedules nothing. Turn the timer on yourself, either in the

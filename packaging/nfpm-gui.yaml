@@ -40,10 +40,6 @@ overrides:
     depends:
       - steamtrain = ${STEAMTRAIN_VERSION}
       - python3-pyqt6
-  archlinux:
-    depends:
-      - steamtrain=${STEAMTRAIN_VERSION}
-      - python-pyqt6
 
 contents:
   # Owned explicitly so rpm removes it; see the note in nfpm-core.yaml.
