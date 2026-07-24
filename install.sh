@@ -7,6 +7,32 @@ LIB_DIR="$HOME/.local/lib/steamtrain"
 BIN_DIR="$HOME/.local/bin"
 UNIT_DIR="$HOME/.config/systemd/user"
 
+usage() {
+    echo "usage: $0 [--migrate]"
+    echo "  --migrate  remove a previous ~/.local install and exit, installing nothing."
+    echo "             Use this when switching to a distribution package. Your config"
+    echo "             and state are preserved."
+}
+
+# --migrate delegates to `steamtrain doctor`, which owns the removal allowlist.
+# Duplicating that list in shell is how the two copies drift apart and one of
+# them eventually deletes state.json.
+if [ $# -gt 0 ]; then
+    case "$1" in
+        --migrate)
+            if ! command -v python3 >/dev/null 2>&1; then
+                echo "ERROR: python3 is required for --migrate." >&2
+                exit 1
+            fi
+            PYTHONPATH="$REPO_DIR${PYTHONPATH:+:$PYTHONPATH}" \
+                python3 -m steamtrain doctor --fix --force
+            exit $?
+            ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "ERROR: unknown option $1" >&2; usage >&2; exit 1 ;;
+    esac
+fi
+
 distro_ids() {
     # Emit "ID ID_LIKE" from os-release for matching; empty if unavailable.
     # Parsed rather than sourced: os-release is shell syntax, so sourcing it

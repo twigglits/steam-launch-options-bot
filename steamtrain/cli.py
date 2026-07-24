@@ -5,8 +5,8 @@ import dataclasses
 import sys
 from pathlib import Path
 
-from . import (__version__, apply as apply_mod, advisor, codes, jsonio, rules,
-               steam, sysinfo)
+from . import (__version__, apply as apply_mod, advisor, codes, doctor, jsonio,
+               rules, steam, sysinfo)
 
 
 def _build_parser():
@@ -41,6 +41,16 @@ def _build_parser():
     setup = sub.add_parser(
         "setup", help="confirm detected hardware; pick or clear the GPU vendor if wrong")
     setup.add_argument("--config", default=rules.DEFAULT_CONFIG_PATH)
+    doc = sub.add_parser(
+        "doctor", help="diagnose install problems; --fix removes an old ~/.local install")
+    doc.add_argument("--fix", action="store_true", help="repair what can be repaired")
+    doc.add_argument("--dry-run", action="store_true",
+                     help="with --fix, list what would be removed and remove nothing")
+    doc.add_argument("--force", action="store_true",
+                     help="treat an old ~/.local install as a conflict even when no "
+                          "packaged install is present (used by install.sh --migrate)")
+    doc.add_argument("--json", action="store_true",
+                     help="machine-readable newline-delimited JSON on stdout")
     return parser
 
 
@@ -477,14 +487,91 @@ def _setup_interact(args, profile, override):
     return 0
 
 
+def _emit_findings(out, findings, stream=None):
+    for finding in findings:
+        if out.enabled:
+            out.emit(jsonio.KIND_FINDING, code=finding.code,
+                     message=finding.message, paths=finding.paths,
+                     fixable=finding.fixable)
+        else:
+            print(f"PROBLEM: {finding.message}.", file=stream)
+            for path in finding.paths:
+                print(f"         {path}", file=stream)
+
+
+def cmd_doctor(args):
+    out = _emitter(args)
+    findings = doctor.diagnose(force=args.force)
+    if not findings:
+        if out.enabled:
+            out.result(True, codes.OK, findings=0, fixed=0)
+        else:
+            print("No problems found.")
+        return 0
+
+    _emit_findings(out, findings)
+    if not args.fix:
+        if out.enabled:
+            out.result(False, codes.ERROR, findings=len(findings), fixed=0,
+                       message="run `steamtrain doctor --fix` to repair")
+        else:
+            print("\nRun `steamtrain doctor --fix` to repair.")
+        return 2
+
+    removed, failed = doctor.migrate(dry_run=args.dry_run)
+    if out.enabled:
+        ok = not failed and not args.dry_run
+        out.result(ok, codes.OK if ok else codes.ERROR,
+                   findings=len(findings), fixed=0 if args.dry_run else len(removed),
+                   removed=[{"path": path, "detail": detail} for path, detail in removed],
+                   failed=[{"path": path, "error": error} for path, error in failed],
+                   dry_run=args.dry_run)
+    else:
+        for path, detail in removed:
+            print(f"  {detail}: {path}")
+        for path, error in failed:
+            print(f"  FAILED: {path}: {error}", file=sys.stderr)
+        if args.dry_run:
+            print("\ndry-run: nothing was removed")
+        elif failed:
+            print("\nMigration incomplete; the paths above still need removing.",
+                  file=sys.stderr)
+        else:
+            print("\nMigrated. Configuration and state were left untouched.")
+    return 2 if (failed or args.dry_run) else 0
+
+
+def _warn_legacy(args):
+    """FR-9: a shadowed install must never run silently.
+
+    Cheap on a healthy machine - diagnose() returns immediately when no
+    packaged install exists, which is every developer checkout.
+    """
+    try:
+        findings = doctor.diagnose()
+    except OSError:
+        return
+    if not findings:
+        return
+    out = _emitter(args)
+    _emit_findings(out, findings, stream=sys.stderr)
+    if not out.enabled:
+        print("         The packaged install is not the code being run.",
+              file=sys.stderr)
+        print("         Fix automatically: steamtrain doctor --fix", file=sys.stderr)
+
+
 COMMANDS = {
     "scan": cmd_scan, "apply": cmd_apply, "status": cmd_status,
     "revert": cmd_revert, "advise": cmd_advise, "setup": cmd_setup,
+    "doctor": cmd_doctor,
 }
 
 
 def main(argv=None):
     args = _build_parser().parse_args(argv)
+    if args.command != "doctor":
+        _warn_legacy(args)
     try:
         return COMMANDS[args.command](args)
     except rules.ConfigError as exc:
