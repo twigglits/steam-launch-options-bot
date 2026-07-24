@@ -57,7 +57,7 @@ jobs:
             echo "::warning::steamtrain_gui/ is absent - the GUI package was NOT built or verified in this run"
           fi
           for config in $configs; do
-            for format in deb rpm archlinux; do
+            for format in deb rpm; do
               nfpm package -f "$config" -p "$format" -t dist/
             done
           done
@@ -111,9 +111,6 @@ jobs:
           - image: fedora:latest
             install: dnf install -y -q /dist/steamtrain-[0-9]*.noarch.rpm
             remove: dnf remove -y -q steamtrain
-          - image: archlinux:latest
-            install: pacman -Sy --noconfirm >/dev/null && pacman -U --noconfirm /dist/steamtrain-[0-9]*-any.pkg.tar.zst
-            remove: pacman -R --noconfirm steamtrain
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v4

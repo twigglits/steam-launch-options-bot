@@ -53,7 +53,7 @@ jobs:
           STEAMTRAIN_VERSION="${GITHUB_REF_NAME#v}"
           export STEAMTRAIN_VERSION
           for config in packaging/nfpm-core.yaml packaging/nfpm-gui.yaml; do
-            for format in deb rpm archlinux; do
+            for format in deb rpm; do
               nfpm package -f "$config" -p "$format" -t dist/
             done
           done
@@ -75,61 +75,5 @@ jobs:
           gh release upload "${GITHUB_REF_NAME}" --clobber \
             "steamtrain-${GITHUB_REF_NAME}.tar.gz" \
             "steamtrain-${GITHUB_REF_NAME}.tar.gz.sha256" \
-            dist/*.deb dist/*.rpm dist/*.pkg.tar.zst dist/SHA256SUMS
+            dist/*.deb dist/*.rpm dist/SHA256SUMS
 
-  # Separate job, and deliberately gated. The AUR key can overwrite a PKGBUILD
-  # that Arch users execute at install time, so it is a supply-chain credential
-  # rather than an ordinary deploy token: tag refs only, and an environment that
-  # can require a human approval before the push.
-  aur:
-    needs: release
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    environment: aur
-    steps:
-      - uses: actions/checkout@v6
-      - name: Render the PKGBUILD for this tag
-        run: |
-          set -eu
-          version="${GITHUB_REF_NAME#v}"
-          url="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${GITHUB_REF_NAME}.tar.gz"
-          curl -sL "$url" -o source.tar.gz
-          sum=$(sha256sum source.tar.gz | cut -d' ' -f1)
-          sed -e "s/@VERSION@/${version}/g" -e "s/@SHA256@/${sum}/g" \
-            packaging/aur/PKGBUILD.in > PKGBUILD
-          cat PKGBUILD
-      - name: Generate .SRCINFO
-        run: |
-          # makepkg refuses to run as root and is not on the runner, so the
-          # .SRCINFO is produced inside an Arch container as a normal user.
-          docker run --rm -v "$PWD:/pkg" -w /pkg archlinux:latest bash -c '
-            pacman -Sy --noconfirm --needed base-devel >/dev/null 2>&1
-            useradd -m build && chown -R build /pkg
-            su build -c "makepkg --printsrcinfo" > .SRCINFO
-          '
-          cat .SRCINFO
-      - name: Push to the AUR
-        env:
-          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
-        run: |
-          set -eu
-          install -m 700 -d ~/.ssh
-          install -m 600 /dev/stdin ~/.ssh/aur_ci <<< "$AUR_SSH_KEY"
-          # Pinned host key rather than a blind ssh-keyscan, which would trust
-          # whatever answers and undo the point of verifying it.
-          install -m 644 packaging/aur/known_hosts ~/.ssh/known_hosts
-          cat >> ~/.ssh/config <<'EOF'
-          Host aur.archlinux.org
-            User aur
-            IdentityFile ~/.ssh/aur_ci
-            IdentitiesOnly yes
-          EOF
-          git clone ssh://aur@aur.archlinux.org/steamtrain.git aur-repo
-          cp PKGBUILD .SRCINFO aur-repo/
-          cd aur-repo
-          git config user.name "steamtrain release bot"
-          git config user.email "twigglits@users.noreply.github.com"
-          git add PKGBUILD .SRCINFO
-          git diff --cached --quiet && { echo "AUR already up to date"; exit 0; }
-          git commit -m "Update to ${GITHUB_REF_NAME#v}"
-          git push
