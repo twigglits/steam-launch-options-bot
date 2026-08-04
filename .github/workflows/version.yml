@@ -65,13 +65,18 @@ jobs:
         env:
           NEXT: ${{ steps.next.outputs.version }}
         run: |
-          sed -i "s/^__version__ = \".*\"/__version__ = \"$NEXT\"/" steamtrain/__init__.py
+          # Both halves, because the GUI compares its own constant against the
+          # Core's at startup and refuses to open on a mismatch. Bumping only
+          # the Core ships a release whose GUI declares the previous version.
+          sed -i "s/^__version__ = \".*\"/__version__ = \"$NEXT\"/" \
+            steamtrain/__init__.py steamtrain_gui/__init__.py
       - name: Verify the bump landed
         if: ${{ steps.next.outputs.skip != 'true' }}
         env:
           NEXT: ${{ steps.next.outputs.version }}
         run: |
           grep -q "^__version__ = \"$NEXT\"$" steamtrain/__init__.py
+          grep -q "^__version__ = \"$NEXT\"$" steamtrain_gui/__init__.py
           # The CLI must report the same version it will be released as.
           [ "$(python3 -m steamtrain --version)" = "steamtrain $NEXT" ]
       - name: Commit, tag, push

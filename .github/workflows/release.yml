@@ -21,11 +21,17 @@ jobs:
             refs/tags/v*) ;;
             *) echo "Release must run on a v* tag ref, got $GITHUB_REF (dispatch this workflow on a tag)"; exit 1 ;;
           esac
-          v=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' steamtrain/__init__.py | head -n1)
-          if [ "v$v" != "$GITHUB_REF_NAME" ]; then
-            echo "Tag $GITHUB_REF_NAME does not match steamtrain/__init__.py version $v — releases must ship the version they claim"
-            exit 1
-          fi
+          # Both halves: the GUI refuses to open when its own constant differs
+          # from the Core's, so a release that bumped only one is dead on
+          # arrival for every desktop user. This is the last gate before
+          # artifacts are published, and it must hold for hand-cut tags too.
+          for module in steamtrain steamtrain_gui; do
+            v=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$module/__init__.py" | head -n1)
+            if [ "v$v" != "$GITHUB_REF_NAME" ]; then
+              echo "Tag $GITHUB_REF_NAME does not match $module/__init__.py version $v — releases must ship the version they claim"
+              exit 1
+            fi
+          done
       - name: Run tests against the release ref
         run: python3 -m unittest discover -s tests
       - name: Build installable tarball
