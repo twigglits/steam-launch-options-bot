@@ -61,15 +61,23 @@ known to break games (e.g. it never forces `SDL_VIDEODRIVER=wayland`).
 ### From a package (recommended)
 
 Download the artifacts for your distribution from the
-[latest release](https://github.com/twigglits/steamtrain/releases/latest):
+[latest release](https://github.com/twigglits/steamtrain/releases/latest). The
+core package is a compiled binary and so is built per architecture — `amd64`
+and `arm64` for deb, `x86_64` and `aarch64` for rpm:
 
 ```sh
-sudo apt install ./steamtrain_*_all.deb          # Debian, Ubuntu
-sudo dnf install ./steamtrain-*.noarch.rpm       # Fedora
+sudo apt install ./steamtrain_*_amd64.deb ./steamtrain-gui_*_all.deb       # Debian, Ubuntu
+sudo dnf install ./steamtrain-*.x86_64.rpm ./steamtrain-gui-*.noarch.rpm   # Fedora
 ```
 
-Add `steamtrain-gui` for the desktop interface — a settings window in your
-application menu, plus a tray icon on desktops that have a system tray.
+On arm64, substitute `_arm64.deb` or `.aarch64.rpm` for the core package;
+`steamtrain-gui` is still Python and ships a single artifact for every
+architecture, hence `all`/`noarch`.
+
+`steamtrain-gui` is the desktop interface — a settings window in your
+application menu, plus a tray icon on desktops that have a system tray. It is
+optional: drop that argument for a CLI-only install. It pins the core's exact
+version, so install the pair in one command rather than one after the other.
 
 The packages are statically linked, so there is no glibc floor and no
 runtime dependency to satisfy. On Arch and other distributions without a
