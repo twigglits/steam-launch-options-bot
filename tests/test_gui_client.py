@@ -6,6 +6,8 @@ from unittest import mock
 
 from steamtrain_gui import client
 
+from tests.coreproc import CORE, SKIP_REASON
+
 
 class FakeCompleted:
     def __init__(self, stdout="", returncode=0, stderr=""):
@@ -156,6 +158,7 @@ class VersionTest(unittest.TestCase):
         self.assertEqual("0.5.0", version)
 
 
+@unittest.skipIf(CORE is None, SKIP_REASON)
 class RealCoreTest(unittest.TestCase):
     """End-to-end against the actual CLI in this checkout.
 
@@ -168,32 +171,19 @@ class RealCoreTest(unittest.TestCase):
     def setUpClass(cls):
         import os
         import subprocess
-        import sys
         import tempfile
         from pathlib import Path
 
-        from tests.test_steam import make_manifest, make_steam_root
+        from tests.coreproc import make_bindir, make_manifest, make_steam_root, make_user
 
         cls.tmp = tempfile.TemporaryDirectory()
         base = Path(cls.tmp.name)
-        repo = Path(__file__).resolve().parent.parent
 
         cls.steam_root = make_steam_root(base)
         make_manifest(cls.steam_root, "100", "Fixture Game", "FixtureGame")
-        config_dir = cls.steam_root / "userdata" / "111" / "config"
-        config_dir.mkdir(parents=True)
-        (config_dir / "localconfig.vdf").write_text('"UserLocalConfigStore"\n{\n}\n')
+        make_user(cls.steam_root, "111")
 
-        # A shim rather than whatever `steamtrain` happens to resolve to on the
-        # developer's PATH, which may be an older install entirely.
-        bindir = base / "bin"
-        bindir.mkdir()
-        shim = bindir / "steamtrain"
-        shim.write_text(
-            f"#!/bin/sh\n"
-            f'PYTHONPATH="{repo}" exec "{sys.executable}" -m steamtrain "$@"\n')
-        shim.chmod(0o755)
-        cls.bindir = str(bindir)
+        cls.bindir = make_bindir(base)
         cls.base = base
         cls.env_path = os.environ["PATH"]
         cls.subprocess = subprocess

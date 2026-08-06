@@ -1,5 +1,0 @@
-#!/bin/sh
-# System launcher for the packaged install. The package is plain Python with
-# no dependencies, so it is dropped under /usr/lib rather than into site-packages.
-export PYTHONPATH="/usr/lib/steamtrain${PYTHONPATH:+:$PYTHONPATH}"
-exec python3 -m steamtrain "$@"

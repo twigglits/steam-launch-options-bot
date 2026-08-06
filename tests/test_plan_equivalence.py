@@ -16,7 +16,6 @@ and so does this test.
 import json
 import os
 import re
-import shutil
 import subprocess
 import tempfile
 import unittest
@@ -25,44 +24,10 @@ from unittest import mock
 
 from steamtrain_gui import client
 
-
-def find_core():
-    """The steamtrain binary to test against, or None.
-
-    STEAMTRAIN_BIN is what CI sets after `cargo build`; the debug build and
-    then PATH are the convenient fallbacks for a developer.
-    """
-    override = os.environ.get("STEAMTRAIN_BIN")
-    if override:
-        return override if Path(override).is_file() else None
-    repo_root = Path(__file__).resolve().parent.parent
-    for candidate in (repo_root / "target/debug/steamtrain",
-                      repo_root / "target/release/steamtrain"):
-        if candidate.is_file():
-            return str(candidate)
-    return shutil.which("steamtrain")
+from tests.coreproc import CORE, SKIP_REASON, make_manifest, make_steam_root, make_user
 
 
-CORE = find_core()
-
-
-def make_steam_root(base):
-    root = base / "Steam"
-    (root / "steamapps" / "common").mkdir(parents=True)
-    (root / "steamapps" / "libraryfolders.vdf").write_text('"libraryfolders"\n{\n}\n')
-    return root
-
-
-def make_manifest(root, appid, name, installdir):
-    steamapps = root / "steamapps"
-    (steamapps / "common" / installdir).mkdir(parents=True, exist_ok=True)
-    (steamapps / f"appmanifest_{appid}.acf").write_text(
-        f'"AppState"\n{{\n\t"appid"\t\t"{appid}"\n'
-        f'\t"name"\t\t"{name}"\n\t"installdir"\t\t"{installdir}"\n}}\n')
-
-
-@unittest.skipIf(CORE is None,
-                 "no steamtrain binary; run `cargo build` or set STEAMTRAIN_BIN")
+@unittest.skipIf(CORE is None, SKIP_REASON)
 class PlanEquivalenceTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -73,9 +38,7 @@ class PlanEquivalenceTest(unittest.TestCase):
                             ("300", "Excluded Game")):
             make_manifest(self.root, appid, name, name.replace(" ", ""))
         for account in ("111", "222"):
-            cfg = self.root / "userdata" / account / "config"
-            cfg.mkdir(parents=True)
-            (cfg / "localconfig.vdf").write_text('"UserLocalConfigStore"\n{\n}\n')
+            make_user(self.root, account)
         self.state_dir = base / "state"
         self.config = base / "config.json"
         self.config.write_text(json.dumps({"exclude": ["300"]}))
