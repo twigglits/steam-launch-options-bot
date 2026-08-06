@@ -1,16 +1,29 @@
 # Core package: CLI, rule engine, systemd user units.
 #
-# One config, every format. Only the dependency names differ between package
-# families, which is what the `overrides` block is for.
+# One config, every format and every architecture. Two variables drive it:
 #
-# This package has no runtime dependency beyond python3, and that is a hard
-# constraint rather than a preference: it is what makes steamtrain installable
-# and auditable everywhere, and what lets a headless or CLI-only user avoid
-# pulling in Qt.
+#   STEAMTRAIN_VERSION  the version being built
+#   STEAMTRAIN_ARCH     the package architecture (amd64, arm64)
 #
-#   nfpm package -f packaging/nfpm-core.yaml -p deb -t dist/
+# The binary is read from a fixed staging path rather than from
+# target/<triple>/release, because nfpm does not expand environment variables
+# inside `contents.src` globs - only in fields like `version`. The build stages
+# it there first; see the recipe below.
+#
+# This package has no runtime dependency at all, and that is a hard constraint
+# rather than a preference: it is what makes steamtrain installable and
+# auditable everywhere, and what lets a headless or CLI-only user avoid pulling
+# in Qt. The binary is statically linked against musl, so it is also not
+# coupled to the glibc version of whatever machine built it - Debian 12 ships
+# 2.36 and a current CI runner has 2.39.
+#
+#   cargo build --release --target x86_64-unknown-linux-musl
+#   install -Dm755 target/x86_64-unknown-linux-musl/release/steamtrain \
+#     dist/stage/steamtrain
+#   STEAMTRAIN_VERSION=0.5.0 STEAMTRAIN_ARCH=amd64 \
+#     nfpm package -f packaging/nfpm-core.yaml -p deb -t dist/
 name: steamtrain
-arch: all
+arch: ${STEAMTRAIN_ARCH}
 platform: linux
 version: ${STEAMTRAIN_VERSION}
 section: games
@@ -30,29 +43,8 @@ description: |
   Removing this package does not clear launch options it already set. Run
   `steamtrain revert` first if you want them cleared.
 
-depends:
-  - python3 (>= 3.7)
-
-overrides:
-  rpm:
-    depends:
-      - python3 >= 3.7
-
 contents:
-  # Declared explicitly so the package OWNS these directories. Without this,
-  # rpm leaves them behind as empty directories on removal (dpkg happens to
-  # clean up after itself, so this only shows up on Fedora).
-  - dst: /usr/lib/steamtrain
-    type: dir
-  - dst: /usr/lib/steamtrain/steamtrain
-    type: dir
-
-  # Globbed rather than copying the directory, so a stray __pycache__ from a
-  # local test run can never end up inside a release artifact.
-  - src: ./steamtrain/*.py
-    dst: /usr/lib/steamtrain/steamtrain/
-
-  - src: ./packaging/steamtrain
+  - src: ./dist/stage/steamtrain
     dst: /usr/bin/steamtrain
     file_info:
       mode: 0755

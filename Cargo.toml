@@ -1,0 +1,33 @@
+[package]
+name = "steamtrain"
+version = "0.5.0"
+edition = "2021"
+rust-version = "1.74"
+license = "MIT"
+description = "Set hardware-appropriate Steam launch options for installed games."
+repository = "https://github.com/twigglits/steamtrain"
+
+# The dependency surface is deliberately small and is enforced: an allowlist in
+# scripts/check-boundaries.py fails CI when a crate appears here that has not
+# been argued for. This is the Rust successor to the rule that the Core imported
+# nothing outside the Python standard library.
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+# preserve_order is load-bearing, not cosmetic: save_override and
+# save_gpu_vendor merge into an existing config.json and must not reshuffle
+# the keys a user put there.
+serde_json = { version = "1", features = ["preserve_order"] }
+shlex = "1"
+# rustls rather than a system TLS library, so the package gains no libssl
+# dependency. Used only by the on-demand advisor.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

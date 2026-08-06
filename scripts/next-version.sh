@@ -25,13 +25,15 @@ case "$bump" in
   *) echo "usage: $0 [auto|patch|minor|major]" >&2; exit 2 ;;
 esac
 
-current=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' steamtrain/__init__.py | head -n1)
-[ -n "$current" ] || { echo "error: no __version__ in steamtrain/__init__.py" >&2; exit 1; }
+# Cargo.toml's [package] table carries `version` before any dependency table,
+# so the first match is the package's own.
+current=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+[ -n "$current" ] || { echo "error: no version in Cargo.toml" >&2; exit 1; }
 
 last_tag=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
 if [ -n "$last_tag" ]; then
   if [ "${last_tag#v}" != "$current" ]; then
-    echo "error: steamtrain/__init__.py version ($current) != last tag ($last_tag); fix the drift before releasing" >&2
+    echo "error: Cargo.toml version ($current) != last tag ($last_tag); fix the drift before releasing" >&2
     exit 1
   fi
   range="$last_tag..HEAD"

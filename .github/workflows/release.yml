@@ -11,10 +11,11 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
       - name: Verify the ref is a v* tag that matches the package version
         run: |
           case "$GITHUB_REF" in
@@ -25,27 +26,54 @@ jobs:
           # from the Core's, so a release that bumped only one is dead on
           # arrival for every desktop user. This is the last gate before
           # artifacts are published, and it must hold for hand-cut tags too.
-          for module in steamtrain steamtrain_gui; do
-            v=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$module/__init__.py" | head -n1)
-            if [ "v$v" != "$GITHUB_REF_NAME" ]; then
-              echo "Tag $GITHUB_REF_NAME does not match $module/__init__.py version $v — releases must ship the version they claim"
+          core=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          gui=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' steamtrain_gui/__init__.py | head -n1)
+          for pair in "Cargo.toml:$core" "steamtrain_gui/__init__.py:$gui"; do
+            name=${pair%%:*}; version=${pair#*:}
+            if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+              echo "Tag $GITHUB_REF_NAME does not match $name version $version — releases must ship the version they claim"
               exit 1
             fi
           done
       - name: Run tests against the release ref
-        run: python3 -m unittest discover -s tests
-      - name: Build installable tarball
+        run: cargo test
+
+  build:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runs-on: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - arch: arm64
+            runs-on: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      # rustls compiles ring, so the musl target needs a C toolchain. Native
+      # musl-tools on a runner of the same architecture is enough.
+      - name: Install the musl toolchain
         run: |
-          name="steamtrain-${GITHUB_REF_NAME}"
-          tar --exclude='__pycache__' \
-              --transform "s,^,${name}/," \
-              -czf "${name}.tar.gz" \
-              steamtrain steamtrain_gui systemd packaging install.sh uninstall.sh \
-              README.md LICENSE
-          sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq musl-tools
+      - name: Build the static binary
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: The shipped binary must need no interpreter or shared libraries
+        run: |
+          file target/${{ matrix.target }}/release/steamtrain | grep -q "statically linked"
       - name: Install nfpm
         run: |
-          curl -sL "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz" \
+          case "${{ matrix.arch }}" in
+            amd64) asset="nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz" ;;
+            arm64) asset="nfpm_${NFPM_VERSION}_Linux_arm64.tar.gz" ;;
+          esac
+          curl -sL "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/${asset}" \
             | tar xz -C /usr/local/bin nfpm
           nfpm --version
         env:
@@ -53,17 +81,58 @@ jobs:
       - name: Build the package matrix
         run: |
           set -eu
-          mkdir -p dist
-          # Read the version without importing, so no __pycache__ is created that
-          # a directory glob could sweep into an artifact.
+          mkdir -p dist/stage
           STEAMTRAIN_VERSION="${GITHUB_REF_NAME#v}"
           export STEAMTRAIN_VERSION
-          for config in packaging/nfpm-core.yaml packaging/nfpm-gui.yaml; do
-            for format in deb rpm; do
-              nfpm package -f "$config" -p "$format" -t dist/
-            done
+          export STEAMTRAIN_ARCH="${{ matrix.arch }}"
+          # nfpm does not expand environment variables inside contents.src, so
+          # the binary is staged at the fixed path the config names.
+          install -Dm755 "target/${{ matrix.target }}/release/steamtrain" dist/stage/steamtrain
+          for format in deb rpm; do
+            nfpm package -f packaging/nfpm-core.yaml -p "$format" -t dist/
           done
+          # The GUI package is pure Python and arch-independent, so it is built
+          # once rather than once per architecture.
+          if [ "${{ matrix.arch }}" = "amd64" ]; then
+            for format in deb rpm; do
+              nfpm package -f packaging/nfpm-gui.yaml -p "$format" -t dist/
+            done
+          fi
+          rm -rf dist/stage
           ls -l dist/
+      - name: Ship the bare binary too, for distributions with no package
+        run: |
+          set -eu
+          name="steamtrain-${GITHUB_REF_NAME}-linux-${{ matrix.arch }}"
+          install -Dm755 "target/${{ matrix.target }}/release/steamtrain" "$name/steamtrain"
+          cp README.md LICENSE "$name/"
+          tar -czf "dist/${name}.tar.gz" "$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.arch }}
+          path: dist/
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: packages-*
+          merge-multiple: true
+          path: dist
+      - name: Build source tarball
+        run: |
+          set -eu
+          name="steamtrain-${GITHUB_REF_NAME}"
+          # steamtrain_gui/ is still Python, so __pycache__ is still worth
+          # excluding.
+          tar --exclude='__pycache__' \
+              --transform "s,^,${name}/," \
+              -czf "dist/${name}-src.tar.gz" \
+              src Cargo.toml Cargo.lock steamtrain_gui systemd packaging \
+              install.sh uninstall.sh README.md LICENSE
       - name: Checksums for every artifact
         run: |
           cd dist && sha256sum ./* > SHA256SUMS && cat SHA256SUMS
@@ -78,8 +147,4 @@ jobs:
               --generate-notes \
               --verify-tag
           fi
-          gh release upload "${GITHUB_REF_NAME}" --clobber \
-            "steamtrain-${GITHUB_REF_NAME}.tar.gz" \
-            "steamtrain-${GITHUB_REF_NAME}.tar.gz.sha256" \
-            dist/*.deb dist/*.rpm dist/SHA256SUMS
-
+          gh release upload "${GITHUB_REF_NAME}" --clobber dist/*

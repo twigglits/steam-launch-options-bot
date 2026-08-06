@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """Enforce the two package boundaries that the whole design rests on.
 
-1. The Core imports nothing outside the standard library. This is what makes
-   steamtrain installable and auditable everywhere, and what lets a CLI-only
-   or headless user avoid pulling in Qt.
+1. The Core's dependency surface stays small and argued-for. It used to be
+   "imports nothing outside the Python standard library"; now that the Core is
+   Rust it is "depends on nothing outside a committed allowlist of crates". The
+   rule is the same one: steamtrain has to stay installable and auditable
+   everywhere, and a CLI-only or headless user must not end up pulling in Qt.
 
 2. The GUI never imports the Core. It reaches it by executing the CLI, so that
    "the window and the timer do the same thing" is true by construction rather
    than by discipline. Checked against import syntax rather than the bare word,
    because the GUI's subprocess adapter necessarily contains the string
-   "steamtrain" as an argument.
+   "steamtrain" as an argument. With the Core in another language this is now
+   also impossible by accident - which is a reason to keep checking it, not to
+   stop: the GUI could still grow a `steamtrain` Python package dependency.
 
 Run from the repository root:  python3 scripts/check-boundaries.py
 """
@@ -18,19 +22,40 @@ import ast
 import sys
 from pathlib import Path
 
-CORE = Path("steamtrain")
+CARGO_TOML = Path("Cargo.toml")
 GUI = Path("steamtrain_gui")
 
-# Standard-library modules the Core is allowed to reach for. Deliberately an
-# allowlist and not sys.stdlib_module_names: adding to it should be a visible
-# decision in a diff, and the check must give the same answer on 3.7 as on 3.13.
-ALLOWED = {
-    "__future__", "argparse", "ast", "collections", "contextlib", "dataclasses", "datetime",
-    "difflib", "errno", "fnmatch", "functools", "glob", "hashlib", "io",
-    "itertools", "json", "logging", "os", "pathlib", "platform", "re",
-    "shlex", "shutil", "signal", "stat", "subprocess", "sys", "tempfile",
-    "textwrap", "time", "typing", "unittest", "urllib", "uuid",
-}
+# Crates the Core is allowed to depend on. Deliberately an allowlist: adding
+# one should be a visible decision in a diff, exactly as adding a standard
+# library module was before the Core was Rust.
+#
+#   clap        - argument parsing
+#   serde       - derive support for serde_json
+#   serde_json  - config, state and the --json wire format
+#   shlex       - POSIX splitting for the override safety gate
+#   ureq        - the advisor's one HTTPS GET, over rustls so no system TLS
+ALLOWED_CRATES = {"clap", "serde", "serde_json", "shlex", "ureq"}
+
+
+def declared_dependencies():
+    """(crate, lineno) for every entry in Cargo.toml's [dependencies].
+
+    A line scan rather than a TOML parse: tomllib is 3.11+, and this script
+    should keep giving the same answer on whatever Python a contributor has.
+    The section is a flat table of `name = ...` lines.
+    """
+    inside = False
+    text = CARGO_TOML.read_text(encoding="utf-8")
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if stripped.startswith("["):
+            inside = stripped == "[dependencies]"
+            continue
+        if not inside or not stripped or stripped.startswith("#"):
+            continue
+        name, separator, _ = stripped.partition("=")
+        if separator:
+            yield name.strip(), lineno
 
 
 def top_level_imports(path):
@@ -48,14 +73,22 @@ def top_level_imports(path):
 
 
 def check_core():
+    if not CARGO_TOML.is_file():
+        return [f"{CARGO_TOML} is missing; the Core cannot be checked."]
     problems = []
-    for path in sorted(CORE.glob("*.py")):
-        for module, lineno in top_level_imports(path):
-            if module not in ALLOWED:
-                problems.append(
-                    f"{path}:{lineno}: Core imports {module!r}, which is not in the "
-                    f"standard-library allowlist. The Core must stay dependency-free; "
-                    f"if this really is stdlib, add it to ALLOWED in this script.")
+    declared = list(declared_dependencies())
+    if not declared:
+        problems.append(
+            f"{CARGO_TOML}: no [dependencies] section was found. If the Core "
+            f"genuinely has no dependencies, delete this check; more likely "
+            f"the manifest moved and this script is now checking nothing.")
+    for crate, lineno in declared:
+        if crate not in ALLOWED_CRATES:
+            problems.append(
+                f"{CARGO_TOML}:{lineno}: Core depends on {crate!r}, which is not "
+                f"in the allowlist. The Core's dependency surface is deliberately "
+                f"small; if this crate is genuinely needed, add it to "
+                f"ALLOWED_CRATES here and say why in the commit.")
     return problems
 
 
@@ -80,7 +113,8 @@ def main():
     if problems:
         print(f"\n{len(problems)} boundary violation(s).", file=sys.stderr)
         return 1
-    print("Boundaries intact: Core is stdlib-only, GUI does not import the Core.")
+    print("Boundaries intact: Core dependencies are on the allowlist, "
+          "GUI does not import the Core.")
     return 0
 
 
