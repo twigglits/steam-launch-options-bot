@@ -8,6 +8,38 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use steamtrain::steam::{Game, Runtime};
+use steamtrain::sysinfo::SystemProfile;
+
+/// The Python tests' `fake_profile`: a fixed profile with one dial, so a test
+/// never depends on the machine it runs on.
+pub fn fake_profile(vendor: &str) -> SystemProfile {
+    SystemProfile {
+        distro: "Arch Linux".to_string(),
+        kernel: "6.9.0".to_string(),
+        desktop: "KDE".to_string(),
+        session: "wayland".to_string(),
+        gpu_vendor: vendor.to_string(),
+        gpu_name: String::new(),
+        gpu_driver: String::new(),
+        cpu_threads: 8,
+        ram_gb: 16,
+        has_gamemode: false,
+        has_mangohud: false,
+        has_gamescope: false,
+    }
+}
+
+pub fn fake_game(appid: &str, runtime: Runtime) -> Game {
+    Game {
+        appid: appid.to_string(),
+        name: "Fixture Game".to_string(),
+        installdir: PathBuf::from("/tmp/FixtureGame"),
+        library: PathBuf::from("/tmp"),
+        runtime,
+    }
+}
+
 /// A Steam root with a steamapps directory and an empty libraryfolders.vdf.
 pub fn make_steam_root(base: &Path) -> PathBuf {
     let root = base.join("Steam");

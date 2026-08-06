@@ -8,6 +8,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub mod codes;
 pub mod jsonio;
 pub mod proc;
+pub mod rules;
 pub mod steam;
 pub mod sysinfo;
 pub mod vdf;
