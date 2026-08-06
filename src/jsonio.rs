@@ -104,6 +104,15 @@ impl<'a> Emitter<'a> {
         self.enabled
     }
 
+    /// The underlying stream, for the text-mode branch.
+    ///
+    /// Text and JSON are mutually exclusive, and routing both through the
+    /// emitter keeps a single owner of stdout - which is what makes "nothing
+    /// but records reaches stdout while --json is active" checkable.
+    pub fn writer(&mut self) -> &mut dyn Write {
+        &mut *self.stream
+    }
+
     pub fn emit(&mut self, kind: Kind, fields: Fields) {
         if !self.enabled {
             return;

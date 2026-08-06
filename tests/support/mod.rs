@@ -129,3 +129,242 @@ pub fn set_options(localconfig: &Path, appid: &str, value: &str) {
     }
     fs::write(localconfig, steamtrain::vdf::dumps(&data)).unwrap();
 }
+
+// --------------------------------------------------------------- CLI harness
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::Duration;
+
+use steamtrain::advisor::Fetcher;
+use steamtrain::cli;
+use steamtrain::doctor;
+use steamtrain::proc::{CommandRunner, Output, RunError};
+use steamtrain::sysinfo::SystemProbe;
+
+/// Canned /proc and /etc content that makes `sysinfo::detect` produce the same
+/// profile `fake_profile` returns, so a CLI test never depends on the machine
+/// running it.
+pub struct FakeProbe {
+    files: HashMap<String, String>,
+    env: HashMap<String, String>,
+    programs: Vec<String>,
+    command_output: Option<String>,
+}
+
+impl FakeProbe {
+    pub fn with_vendor(vendor: &str) -> Self {
+        let mut files = HashMap::new();
+        files.insert(
+            "/etc/os-release".to_string(),
+            "PRETTY_NAME=\"Arch Linux\"\n".to_string(),
+        );
+        files.insert(
+            "/proc/sys/kernel/osrelease".to_string(),
+            "6.9.0\n".to_string(),
+        );
+        files.insert("/proc/cpuinfo".to_string(), "processor\t: 0\n".repeat(8));
+        files.insert(
+            "/proc/meminfo".to_string(),
+            "MemTotal:       16777216 kB\n".to_string(),
+        );
+        match vendor {
+            "nvidia" => {
+                files.insert(
+                    "/sys/module/nvidia/version".to_string(),
+                    "595.71.05\n".to_string(),
+                );
+            }
+            "amd" => {
+                files.insert(
+                    "/proc/modules".to_string(),
+                    "amdgpu 1 0 - Live\n".to_string(),
+                );
+            }
+            "intel" => {
+                files.insert("/proc/modules".to_string(), "i915 1 0 - Live\n".to_string());
+            }
+            _ => {
+                files.insert("/proc/modules".to_string(), "loop 1 0 - Live\n".to_string());
+            }
+        }
+        let mut env = HashMap::new();
+        env.insert("XDG_CURRENT_DESKTOP".to_string(), "KDE".to_string());
+        env.insert("XDG_SESSION_TYPE".to_string(), "wayland".to_string());
+        FakeProbe {
+            files,
+            env,
+            programs: Vec::new(),
+            command_output: None,
+        }
+    }
+
+    pub fn with_program(mut self, name: &str) -> Self {
+        self.programs.push(name.to_string());
+        self
+    }
+}
+
+impl SystemProbe for FakeProbe {
+    fn env(&self, key: &str) -> Option<String> {
+        self.env.get(key).cloned()
+    }
+    fn read_text(&self, path: &str) -> Option<String> {
+        self.files.get(path).cloned()
+    }
+    fn which(&self, name: &str) -> Option<PathBuf> {
+        self.programs
+            .iter()
+            .any(|program| program == name)
+            .then(|| PathBuf::from(format!("/usr/bin/{name}")))
+    }
+    fn path_exists(&self, _path: &Path) -> bool {
+        false
+    }
+    fn run(&self, _argv: &[String], _timeout: Duration) -> Option<String> {
+        self.command_output.clone()
+    }
+}
+
+#[derive(Default)]
+pub struct FakeFetcher {
+    pub body: Option<String>,
+}
+
+impl Fetcher for FakeFetcher {
+    fn get(&self, _url: &str) -> Result<String, String> {
+        self.body.clone().ok_or_else(|| "offline".to_string())
+    }
+}
+
+#[derive(Default)]
+pub struct FakeRunner {
+    pub stdout: String,
+    pub status: Option<i32>,
+    pub calls: Mutex<Vec<Vec<String>>>,
+}
+
+impl FakeRunner {
+    pub fn replying(stdout: &str) -> Self {
+        FakeRunner {
+            stdout: stdout.to_string(),
+            status: Some(0),
+            calls: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl CommandRunner for FakeRunner {
+    fn run(
+        &self,
+        argv: &[String],
+        _input: Option<&str>,
+        _timeout: Duration,
+    ) -> Result<Output, RunError> {
+        self.calls.lock().unwrap().push(argv.to_vec());
+        Ok(Output {
+            status: self.status.or(Some(0)),
+            stdout: self.stdout.clone(),
+            stderr: String::new(),
+        })
+    }
+}
+
+/// Drives `cli::main` in process, the way the Python tests called `cli.main`
+/// under redirect_stdout.
+pub struct Cli {
+    pub probe: FakeProbe,
+    pub fetch: FakeFetcher,
+    pub runner: FakeRunner,
+    pub steam_running: bool,
+    pub doctor: doctor::Options,
+}
+
+impl Cli {
+    pub fn new(vendor: &str) -> Self {
+        Cli {
+            probe: FakeProbe::with_vendor(vendor),
+            fetch: FakeFetcher::default(),
+            runner: FakeRunner::default(),
+            steam_running: false,
+            // A path that cannot exist, so warn_legacy stays silent and the
+            // tests do not depend on whether the machine has the package.
+            doctor: doctor::Options {
+                home: None,
+                path_env: Some("/nonexistent".to_string()),
+                packaged_bin: PathBuf::from("/nonexistent/steamtrain"),
+                force: false,
+            },
+        }
+    }
+
+    pub fn run(&self, argv: &[&str], stdin: &str) -> Run {
+        let mut out: Vec<u8> = Vec::new();
+        let mut err: Vec<u8> = Vec::new();
+        let mut input = std::io::Cursor::new(stdin.as_bytes().to_vec());
+        let running = self.steam_running;
+        let is_running = move |_: &Path| running;
+
+        let code = {
+            let mut io = cli::Io {
+                out: &mut out,
+                err: &mut err,
+                input: &mut input,
+            };
+            let deps = cli::Deps {
+                probe: &self.probe,
+                is_running: &is_running,
+                fetch: &self.fetch,
+                runner: &self.runner,
+                doctor: self.doctor.clone(),
+            };
+            let owned: Vec<String> = argv.iter().map(|arg| arg.to_string()).collect();
+            cli::main(&owned, &mut io, &deps)
+        };
+
+        Run {
+            code,
+            out: String::from_utf8_lossy(&out).into_owned(),
+            err: String::from_utf8_lossy(&err).into_owned(),
+        }
+    }
+}
+
+pub struct Run {
+    pub code: i32,
+    pub out: String,
+    pub err: String,
+}
+
+impl Run {
+    pub fn records(&self) -> Vec<serde_json::Value> {
+        self.out
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                serde_json::from_str(line)
+                    .unwrap_or_else(|err| panic!("not JSON: {line:?} ({err})"))
+            })
+            .collect()
+    }
+
+    pub fn of_kind(&self, kind: &str) -> Vec<serde_json::Value> {
+        self.records()
+            .into_iter()
+            .filter(|record| record["kind"] == kind)
+            .collect()
+    }
+
+    /// The terminal record. Absent means the stream was truncated.
+    pub fn result(&self) -> serde_json::Value {
+        let records = self.records();
+        let last = records.last().expect("at least one record");
+        assert_eq!(last["kind"], "result", "stream did not end with a result");
+        assert_eq!(
+            records.iter().filter(|r| r["kind"] == "result").count(),
+            1,
+            "exactly one result record"
+        );
+        last.clone()
+    }
+}
