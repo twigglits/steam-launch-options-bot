@@ -4,10 +4,10 @@ name: Version
 # Sigo project): every push to main computes the next SemVer increment from
 # the conventional commits since the last v* tag — breaking -> major (minor
 # while on 0.x), feat -> minor, fix/perf/revert -> patch, docs/chore/ci-only
-# -> no release. When a release is due it bumps steamtrain/__init__.py, commits,
-# tags, and chains into the Release workflow for that tag. Manual dispatch can
-# force a release or override the increment (the only way to cut 1.0.0 from
-# 0.x is `major`).
+# -> no release. When a release is due it bumps Cargo.toml (and the interface's
+# __version__ alongside it), commits, tags, and chains into the Release
+# workflow for that tag. Manual dispatch can force a release or override the
+# increment (the only way to cut 1.0.0 from 0.x is `major`).
 #
 # Dispatch-chaining instead of relying on the tag push: refs pushed with the
 # default GITHUB_TOKEN do not trigger `on: push` workflows (GitHub's recursion
@@ -45,6 +45,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0 # next-version.sh needs full history and tags
+      - uses: dtolnay/rust-toolchain@stable
       - name: Compute next version
         id: next
         env:
@@ -68,17 +69,23 @@ jobs:
           # Both halves, because the GUI compares its own constant against the
           # Core's at startup and refuses to open on a mismatch. Bumping only
           # the Core ships a release whose GUI declares the previous version.
+          # 0,/re/ so only the [package] version is touched, never a
+          # dependency's.
+          sed -i "0,/^version = \".*\"/s//version = \"$NEXT\"/" Cargo.toml
           sed -i "s/^__version__ = \".*\"/__version__ = \"$NEXT\"/" \
-            steamtrain/__init__.py steamtrain_gui/__init__.py
+            steamtrain_gui/__init__.py
+          # Keep Cargo.lock's record of this package in step, so the release
+          # build does not find the lockfile dirty.
+          cargo update --workspace --offline || cargo update -p steamtrain --offline
       - name: Verify the bump landed
         if: ${{ steps.next.outputs.skip != 'true' }}
         env:
           NEXT: ${{ steps.next.outputs.version }}
         run: |
-          grep -q "^__version__ = \"$NEXT\"$" steamtrain/__init__.py
+          [ "$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)" = "$NEXT" ]
           grep -q "^__version__ = \"$NEXT\"$" steamtrain_gui/__init__.py
           # The CLI must report the same version it will be released as.
-          [ "$(python3 -m steamtrain --version)" = "steamtrain $NEXT" ]
+          [ "$(cargo run --quiet -- --version)" = "steamtrain $NEXT" ]
       - name: Commit, tag, push
         if: ${{ steps.next.outputs.skip != 'true' }}
         env:

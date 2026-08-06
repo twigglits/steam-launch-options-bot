@@ -5,7 +5,7 @@ deliberate, and worth understanding before you vendor, fork, or repackage it.
 
 | Package | Source | Licence |
 | --- | --- | --- |
-| `steamtrain` (Core: CLI, rule engine, systemd units) | `steamtrain/`, `systemd/`, `install.sh`, `uninstall.sh`, `scripts/` | **MIT** |
+| `steamtrain` (Core: CLI, rule engine, systemd units) | `src/`, `Cargo.toml`, `systemd/`, `install.sh`, `uninstall.sh`, `scripts/` | **MIT** |
 | `steamtrain-gui` (settings window, tray applet) | `steamtrain_gui/` | **GPL-3.0-or-later** |
 
 ## Why they differ
@@ -22,12 +22,21 @@ distribution steamtrain targets.
 
 ## What this means in practice
 
-- **The Core stays MIT and dependency-free.** It imports only the Python
-  standard library, and CI fails the build if that ever stops being true. You
-  can vendor, embed, or relicense it exactly as before.
-- **No GPL code may be imported into the Core.** The GUI reaches the Core by
-  executing `/usr/bin/steamtrain`, never by importing it. CI enforces that too.
-  The boundary is a licensing boundary as much as an architectural one.
+- **The Core stays MIT and dependency-light.** It depends on five crates from
+  a committed allowlist — `clap`, `serde`, `serde_json`, `shlex` and `ureq`,
+  each `MIT OR Apache-2.0` — and CI fails the build if a sixth appears. You can
+  vendor, embed, or relicense it exactly as before.
+- **Static linking makes the transitive tree a licensing question, not just a
+  supply-chain one.** The shipped binary contains its dependencies rather than
+  loading them, so their terms travel with it. Every crate in the tree is
+  permissive (MIT, Apache-2.0, ISC, BSD-3-Clause, Unicode-3.0,
+  CDLA-Permissive-2.0); none is copyleft. Check with `cargo metadata` before
+  adding anything, and keep it that way — a single GPL crate anywhere in the
+  graph would relicense the Core.
+- **No GPL code may be linked into the Core.** The GUI reaches the Core by
+  executing `/usr/bin/steamtrain`, never by importing it — and now cannot, the
+  two being different languages. CI enforces that too. The boundary is a
+  licensing boundary as much as an architectural one.
 - **Installing the CLI does not pull in any GPL code**, or any Qt. That is the
   main reason the two packages are separate rather than one.
 
@@ -35,12 +44,14 @@ MIT-licensed code is GPL-compatible, so combining the Core into the GPL-licensed
 GUI package is lawful; the combination is what carries the GPL, not the Core
 itself.
 
-## If PySide6 becomes universally available
+## Replacing the GUI
 
-Migrating the GUI to PySide6 and relicensing it as LGPL is a desirable
-follow-up, and the architecture keeps that door open: the GUI is a separate
-package that talks to the Core over a process boundary, so it can be replaced
-wholesale without touching anything else.
+Migrating the GUI off PyQt6 and relicensing it — to PySide6 if that ever
+becomes universally available, or to a non-Qt toolkit — would let the whole
+project be permissively licensed. The architecture keeps that door open, and
+the Core being Rust does not narrow it: the GUI is a separate package that
+talks to the Core over a versioned process protocol, so it can be replaced
+wholesale, in any language, without touching anything else.
 
 Full texts: [`LICENSE`](LICENSE) (MIT) and
 [`packaging/LICENSE.gui`](packaging/LICENSE.gui) (GPL-3.0).

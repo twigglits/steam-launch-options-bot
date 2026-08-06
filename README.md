@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/twigglits/steamtrain/actions/workflows/ci.yml/badge.svg)](https://github.com/twigglits/steamtrain/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python 3.7+](https://img.shields.io/badge/python-3.7%2B-blue.svg)](https://www.python.org/downloads/)
+[![Rust](https://img.shields.io/badge/rust-1.74%2B-orange.svg)](https://www.rust-lang.org/)
 [![Release](https://img.shields.io/github/v/release/twigglits/steamtrain?sort=semver)](https://github.com/twigglits/steamtrain/releases/latest)
 
 <p align="center">
@@ -14,9 +14,10 @@ game folders that actually exist on disk) and sets launch options appropriate
 for **your** OS, desktop environment, and hardware.
 
 Works across Ubuntu/Debian, Arch, and Fedora (and their derivatives) — anything
-with Python 3.7+ and, for automatic scheduling, a systemd user session. Without
-a systemd user session the CLI still works; you just run `steamtrain apply`
-yourself. No dependencies beyond Python 3 (stdlib only). Fully offline.
+with a Linux kernel and, for automatic scheduling, a systemd user session.
+Without a systemd user session the CLI still works; you just run
+`steamtrain apply` yourself. A single statically linked binary with **no runtime
+dependencies at all**. Fully offline.
 
 ## Why not just copy options from ProtonDB?
 
@@ -70,8 +71,9 @@ sudo dnf install ./steamtrain-*.noarch.rpm       # Fedora
 Add `steamtrain-gui` for the desktop interface — a settings window in your
 application menu, plus a tray icon on desktops that have a system tray.
 
-On Arch and other distributions without a package, install from source
-(below).
+The packages are statically linked, so there is no glibc floor and no
+runtime dependency to satisfy. On Arch and other distributions without a
+package, install from source (below).
 
 **Installing a package does nothing on its own.** It writes no files into your
 home directory and schedules nothing. Turn the timer on yourself, either in the
@@ -107,16 +109,20 @@ are removed.
 ./install.sh
 ```
 
-This copies the package to `~/.local/lib/steamtrain`, a `steamtrain`
-launcher to `~/.local/bin`, and installs + starts a systemd **user** timer
+This builds with `cargo build --release`, installs the binary to
+`~/.local/bin/steamtrain`, and installs + starts a systemd **user** timer
 (2 min after boot, then every 30 min — new installs get options
 automatically). Restart Steam to see applied options take effect in the UI.
+
+Building from source needs a Rust toolchain. If you would rather not install
+one, every release also ships a prebuilt binary tarball alongside the
+distribution packages.
 
 `./install.sh --migrate` removes a previous `~/.local` install and exits
 without installing anything, for switching to a distribution package.
 
-The installer checks for `python3` first (printing a per-distro install hint
-if it is missing — `pacman`/`dnf`/`apt`, never run for you). If there is no
+The installer checks for `cargo` first (printing a per-distro install hint if
+it is missing — `pacman`/`dnf`/`apt`, never run for you). If there is no
 systemd user session it warns and skips the timer, leaving a working CLI. When
 run in a terminal it finishes by launching the hardware setup wizard (below);
 piped/non-interactive installs skip it and print a reminder to run
@@ -124,10 +130,10 @@ piped/non-interactive installs skip it and print a reminder to run
 
 ### Supported distributions
 
-Ubuntu/Debian, Arch, and Fedora and their derivatives are all supported; the
-install is identical wherever `python3` (>= 3.7) and a systemd user session are
-present. Older enterprise distros that ship Python 3.6 (RHEL/CentOS 7) are not
-supported; the installer checks and refuses cleanly.
+Ubuntu/Debian, Arch, and Fedora and their derivatives are all supported. The
+packaged binary is statically linked against musl, so it carries no glibc
+version requirement and runs the same on all of them; installing from source
+needs only a Rust toolchain and a systemd user session for the timer.
 
 ```sh
 ./uninstall.sh        # run `steamtrain revert` first if you want options cleared
@@ -228,5 +234,11 @@ at `/home/<you>/.local/bin/steamtrain apply`.
 ## Development
 
 ```sh
-python3 -m unittest discover -s tests -v
+cargo test                                  # the Core
+cargo build                                 # the interface tests execute it
+python3 -m unittest discover -s tests -v    # the desktop interface
 ```
+
+The Core is Rust; the desktop interface is Python and reaches the Core by
+executing it, never by importing it. `scripts/check-boundaries.py` enforces
+both halves of that and runs in CI.
