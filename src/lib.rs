@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub mod advisor;
 pub mod apply;
 pub mod codes;
 pub mod doctor;
