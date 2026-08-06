@@ -1,9 +1,8 @@
 #!/bin/sh
-# Install steamtrain for the current user: package, launcher, systemd user units.
+# Install steamtrain for the current user: binary, systemd user units.
 set -eu
 
 REPO_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
-LIB_DIR="$HOME/.local/lib/steamtrain"
 BIN_DIR="$HOME/.local/bin"
 UNIT_DIR="$HOME/.config/systemd/user"
 
@@ -14,25 +13,6 @@ usage() {
     echo "             and state are preserved."
 }
 
-# --migrate delegates to `steamtrain doctor`, which owns the removal allowlist.
-# Duplicating that list in shell is how the two copies drift apart and one of
-# them eventually deletes state.json.
-if [ $# -gt 0 ]; then
-    case "$1" in
-        --migrate)
-            if ! command -v python3 >/dev/null 2>&1; then
-                echo "ERROR: python3 is required for --migrate." >&2
-                exit 1
-            fi
-            PYTHONPATH="$REPO_DIR${PYTHONPATH:+:$PYTHONPATH}" \
-                python3 -m steamtrain doctor --fix --force
-            exit $?
-            ;;
-        -h|--help) usage; exit 0 ;;
-        *) echo "ERROR: unknown option $1" >&2; usage >&2; exit 1 ;;
-    esac
-fi
-
 distro_ids() {
     # Emit "ID ID_LIKE" from os-release for matching; empty if unavailable.
     # Parsed rather than sourced: os-release is shell syntax, so sourcing it
@@ -42,41 +22,57 @@ distro_ids() {
         tr -d "\"'" | tr '\n' ' '
 }
 
-python_install_hint() {
+cargo_install_hint() {
     case "$(distro_ids)" in
-        *arch*|*manjaro*)                 echo "  sudo pacman -S python" ;;
+        *arch*|*manjaro*)                 echo "  sudo pacman -S rust" ;;
         *fedora*|*rhel*|*centos*|*rocky*|*alma*)
-                                          echo "  sudo dnf install python3" ;;
-        *debian*|*ubuntu*|*mint*|*pop*)   echo "  sudo apt install python3" ;;
-        *) echo "  install python3 using your distribution's package manager" ;;
+                                          echo "  sudo dnf install cargo" ;;
+        *debian*|*ubuntu*|*mint*|*pop*)   echo "  sudo apt install cargo" ;;
+        *) echo "  install Rust from https://rustup.rs" ;;
     esac
+    echo "Or install a distribution package instead, which needs no toolchain:"
+    echo "  https://github.com/twigglits/steamtrain/releases/latest"
 }
 
-# Preflight: refuse before touching anything when python3 is missing or too old.
-if ! command -v python3 >/dev/null 2>&1; then
-    echo "ERROR: python3 is required but was not found." >&2
-    echo "Install it, then re-run ./install.sh:" >&2
-    python_install_hint >&2
-    exit 1
+require_cargo() {
+    command -v cargo >/dev/null 2>&1 && return 0
+    echo "ERROR: cargo (Rust) is required to build steamtrain from source." >&2
+    echo "Install it, then re-run $1:" >&2
+    cargo_install_hint >&2
+    return 1
+}
+
+build() {
+    ( cd "$REPO_DIR" && cargo build --release )
+}
+
+# --migrate delegates to `steamtrain doctor`, which owns the removal allowlist.
+# Duplicating that list in shell is how the two copies drift apart and one of
+# them eventually deletes state.json. An already-installed binary is preferred
+# over building one, so switching to a distribution package does not require a
+# toolchain the user may not have.
+if [ $# -gt 0 ]; then
+    case "$1" in
+        --migrate)
+            if command -v steamtrain >/dev/null 2>&1; then
+                exec steamtrain doctor --fix --force
+            fi
+            require_cargo "$0 --migrate"
+            build
+            exec "$REPO_DIR/target/release/steamtrain" doctor --fix --force
+            ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "ERROR: unknown option $1" >&2; usage >&2; exit 1 ;;
+    esac
 fi
-if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 7) else 1)'; then
-    echo "ERROR: python3 >= 3.7 is required (found: $(python3 --version 2>&1))." >&2
-    echo "Upgrade it, then re-run ./install.sh:" >&2
-    python_install_hint >&2
-    exit 1
-fi
 
-mkdir -p "$LIB_DIR" "$BIN_DIR" "$UNIT_DIR"
+# Preflight: refuse before touching anything when cargo is missing.
+require_cargo "./install.sh"
 
-rm -rf "$LIB_DIR/steamtrain"
-cp -r "$REPO_DIR/steamtrain" "$LIB_DIR/steamtrain"
+build
 
-cat > "$BIN_DIR/steamtrain" <<EOF
-#!/bin/sh
-export PYTHONPATH="$LIB_DIR\${PYTHONPATH:+:\$PYTHONPATH}"
-exec python3 -m steamtrain "\$@"
-EOF
-chmod +x "$BIN_DIR/steamtrain"
+mkdir -p "$BIN_DIR" "$UNIT_DIR"
+install -m 0755 "$REPO_DIR/target/release/steamtrain" "$BIN_DIR/steamtrain"
 
 # systemd user session is optional: install the timer when available, else warn.
 # Any systemd step may still fail (no lingering session, masked unit); degrade

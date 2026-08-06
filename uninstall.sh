@@ -9,6 +9,9 @@ rm -f "$HOME/.config/systemd/user/steamtrain.service" \
 systemctl --user daemon-reload 2>/dev/null || true
 
 rm -f "$HOME/.local/bin/steamtrain"
+# Kept even though this installer no longer creates it: a user upgrading from a
+# release that did still has the directory, and leaving it behind recreates
+# exactly the shadowing problem `steamtrain doctor` exists to fix.
 rm -rf "$HOME/.local/lib/steamtrain"
 
 echo "Uninstalled. State/backups kept in ~/.local/state/steamtrain"

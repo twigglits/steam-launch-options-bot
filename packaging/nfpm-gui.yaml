@@ -2,13 +2,17 @@
 #
 # Separate from the Core so that CLI, headless and server users never pull in
 # ~150MB of Qt, and so the licences stay separable: the Core is MIT with no
-# dependencies, while this package links PyQt6 and is therefore GPL-3.0.
+# runtime dependencies, while this package links PyQt6 and is therefore
+# GPL-3.0.
 #
 # PyQt6 rather than PySide6 because PySide6 is absent from Ubuntu 24.04 LTS.
 # The binding is named differently per family, hence the overrides.
 #
 #   nfpm package -f packaging/nfpm-gui.yaml -p deb -t dist/
 name: steamtrain-gui
+# Still pure Python, so still one artifact for every architecture. The Core it
+# depends on is compiled and therefore per-arch; these two are versioned in
+# lockstep but not built in it.
 arch: all
 platform: linux
 version: ${STEAMTRAIN_VERSION}
@@ -42,13 +46,17 @@ overrides:
       - python3-pyqt6
 
 contents:
-  # Owned explicitly so rpm removes it; see the note in nfpm-core.yaml.
-  # /usr/lib/steamtrain itself is owned by the Core package, which this one
-  # depends on, so it is deliberately not re-declared here.
+  # Owned explicitly so rpm removes them rather than leaving empty directories
+  # behind (dpkg happens to clean up after itself, so this only shows up on
+  # Fedora). Both levels are declared here now: the Core package is a single
+  # binary and no longer creates /usr/lib/steamtrain.
+  - dst: /usr/lib/steamtrain
+    type: dir
   - dst: /usr/lib/steamtrain/steamtrain_gui
     type: dir
 
-  # Globbed: see the note in nfpm-core.yaml.
+  # Globbed rather than copying the directory, so a stray __pycache__ from a
+  # local test run can never end up inside a release artifact.
   - src: ./steamtrain_gui/*.py
     dst: /usr/lib/steamtrain/steamtrain_gui/
 
