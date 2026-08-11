@@ -11,11 +11,19 @@ permissions:
   contents: write
 
 jobs:
-  verify:
+  # One job, because there is one target. Steam's Linux client is x86_64 only,
+  # so an arm64 build would ship a tool with no Steam to configure; dropping it
+  # removes the build matrix, and with it the artifact hand-off between jobs.
+  release:
     runs-on: ubuntu-latest
+    env:
+      TARGET: x86_64-unknown-linux-musl
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
       - name: Verify the ref is a v* tag that matches the package version
         run: |
           case "$GITHUB_REF" in
@@ -35,110 +43,66 @@ jobs:
               exit 1
             fi
           done
+
       - name: Run tests against the release ref
         run: cargo test
 
-  build:
-    needs: verify
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            runs-on: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-          - arch: arm64
-            runs-on: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-musl
-    runs-on: ${{ matrix.runs-on }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
       # musl-tools for the target C toolchain, native on a runner of the same
       # architecture.
       - name: Install the musl toolchain
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq musl-tools
+
       - name: Build the static binary
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target "$TARGET"
+
       - name: The shipped binary must need no interpreter or shared libraries
         run: |
           # static-pie is what a pure-Rust musl build produces; plain "statically
           # linked" is what a C dependency used to force. Both are static.
-          file target/${{ matrix.target }}/release/steamtrain \
+          file "target/$TARGET/release/steamtrain" \
             | grep -qE "static-pie linked|statically linked"
+
       - name: Install nfpm
         run: |
-          case "${{ matrix.arch }}" in
-            amd64) asset="nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz" ;;
-            arm64) asset="nfpm_${NFPM_VERSION}_Linux_arm64.tar.gz" ;;
-          esac
-          curl -sL "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/${asset}" \
+          curl -sL "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz" \
             | tar xz -C /usr/local/bin nfpm
           nfpm --version
         env:
           NFPM_VERSION: 2.47.0
-      - name: Build the package matrix
+
+      - name: Build the packages
         run: |
           set -eu
           mkdir -p dist/stage
           STEAMTRAIN_VERSION="${GITHUB_REF_NAME#v}"
           export STEAMTRAIN_VERSION
-          export STEAMTRAIN_ARCH="${{ matrix.arch }}"
           # nfpm does not expand environment variables inside contents.src, so
           # the binary is staged at the fixed path the config names.
-          install -Dm755 "target/${{ matrix.target }}/release/steamtrain" dist/stage/steamtrain
-          for format in deb rpm; do
-            nfpm package -f packaging/nfpm-core.yaml -p "$format" -t dist/
-          done
-          # The GUI package is pure Python and arch-independent, so it is built
-          # once rather than once per architecture.
-          if [ "${{ matrix.arch }}" = "amd64" ]; then
+          install -Dm755 "target/$TARGET/release/steamtrain" dist/stage/steamtrain
+          for config in core gui; do
             for format in deb rpm; do
-              nfpm package -f packaging/nfpm-gui.yaml -p "$format" -t dist/
+              nfpm package -f "packaging/nfpm-$config.yaml" -p "$format" -t dist/
             done
-          fi
+          done
           rm -rf dist/stage
           ls -l dist/
+
       - name: Ship the bare binary too, for distributions with no package
         run: |
           set -eu
-          name="steamtrain-${GITHUB_REF_NAME}-linux-${{ matrix.arch }}"
-          install -Dm755 "target/${{ matrix.target }}/release/steamtrain" "$name/steamtrain"
+          name="steamtrain-${GITHUB_REF_NAME}-linux-amd64"
+          install -Dm755 "target/$TARGET/release/steamtrain" "$name/steamtrain"
           cp README.md LICENSE "$name/"
           tar -czf "dist/${name}.tar.gz" "$name"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: packages-${{ matrix.arch }}
-          path: dist/
 
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: packages-*
-          merge-multiple: true
-          path: dist
-      - name: Build source tarball
-        run: |
-          set -eu
-          name="steamtrain-${GITHUB_REF_NAME}"
-          # steamtrain_gui/ is still Python, so __pycache__ is still worth
-          # excluding.
-          tar --exclude='__pycache__' \
-              --transform "s,^,${name}/," \
-              -czf "dist/${name}-src.tar.gz" \
-              src Cargo.toml Cargo.lock steamtrain_gui systemd packaging \
-              install.sh uninstall.sh README.md LICENSE
+      # No hand-rolled source tarball: GitHub attaches "Source code (tar.gz)"
+      # and "(zip)" to every release already.
       - name: Checksums for every artifact
         run: |
           cd dist && sha256sum ./* > SHA256SUMS && cat SHA256SUMS
+
       - name: Create GitHub Release and upload assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

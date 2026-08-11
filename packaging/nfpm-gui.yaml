@@ -10,9 +10,8 @@
 #
 #   nfpm package -f packaging/nfpm-gui.yaml -p deb -t dist/
 name: steamtrain-gui
-# Still pure Python, so still one artifact for every architecture. The Core it
-# depends on is compiled and therefore per-arch; these two are versioned in
-# lockstep but not built in it.
+# Pure Python, so one artifact for every architecture, which is `all`/`noarch`
+# rather than the Core's `amd64`. The two are versioned in lockstep.
 arch: all
 platform: linux
 version: ${STEAMTRAIN_VERSION}

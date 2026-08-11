@@ -65,18 +65,15 @@ known to break games (e.g. it never forces `SDL_VIDEODRIVER=wayland`).
 ### From a package (recommended)
 
 Download the artifacts for your distribution from the
-[latest release](https://github.com/twigglits/steamtrain/releases/latest). The
-core package is a compiled binary and so is built per architecture — `amd64`
-and `arm64` for deb, `x86_64` and `aarch64` for rpm:
+[latest release](https://github.com/twigglits/steamtrain/releases/latest):
 
 ```sh
 sudo apt install ./steamtrain_*_amd64.deb ./steamtrain-gui_*_all.deb       # Debian, Ubuntu
 sudo dnf install ./steamtrain-*.x86_64.rpm ./steamtrain-gui-*.noarch.rpm   # Fedora
 ```
 
-On arm64, substitute `_arm64.deb` or `.aarch64.rpm` for the core package;
-`steamtrain-gui` is still Python and ships a single artifact for every
-architecture, hence `all`/`noarch`.
+x86_64 only, because Steam's Linux client is. `steamtrain-gui` is Python and
+ships a single artifact for every architecture, hence `all`/`noarch`.
 
 `steamtrain-gui` is the desktop interface — one settings window in your
 application menu, no tray icon and no background process. It is
