@@ -81,10 +81,9 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
-      # rustls compiles ring, so the musl target needs a C toolchain. Native
-      # musl-tools on a runner of the same architecture is enough; there is no
-      # cross-compilation here and so no need for `cross` and its Docker
-      # requirement.
+      # musl-tools for the target C toolchain. Native, on a runner of the same
+      # architecture, so there is no cross-compilation here and no need for
+      # `cross` and its Docker requirement.
       - name: Install the musl toolchain
         run: |
           sudo apt-get update -qq
@@ -96,7 +95,11 @@ jobs:
           set -eu
           binary=target/${{ matrix.target }}/release/steamtrain
           file "$binary"
-          file "$binary" | grep -q "statically linked" \
+          # Either spelling is a fully static binary with no interpreter and
+          # no shared libraries. The Core links no C code any more, so the musl
+          # target produces static-pie rather than the plain static link a C
+          # dependency used to force; both satisfy what this step is asserting.
+          file "$binary" | grep -qE "static-pie linked|statically linked" \
             || { echo "not statically linked"; exit 1; }
       - name: Install nfpm
         run: |

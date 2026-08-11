@@ -175,8 +175,8 @@ impl fmt::Display for VdfError {
 
 impl std::error::Error for VdfError {}
 
-const WHITESPACE: [u8; 4] = [b' ', b'\t', b'\r', b'\n'];
-const BARE_TOKEN_END: [u8; 7] = [b' ', b'\t', b'\r', b'\n', b'"', b'{', b'}'];
+const WHITESPACE: &[u8] = b" \t\r\n";
+const BARE_TOKEN_END: &[u8] = b" \t\r\n\"{}";
 
 enum Token {
     Str(Vec<u8>),

@@ -75,8 +75,11 @@ jobs:
           sed -i "s/^__version__ = \".*\"/__version__ = \"$NEXT\"/" \
             steamtrain_gui/__init__.py
           # Keep Cargo.lock's record of this package in step, so the release
-          # build does not find the lockfile dirty.
-          cargo update --workspace --offline || cargo update -p steamtrain --offline
+          # build does not find the lockfile dirty. Not --offline: this job
+          # keeps no cargo registry cache, so an offline resolve fails on the
+          # first dependency it cannot find rather than rewriting the one
+          # version it was asked to.
+          cargo update -p steamtrain
       - name: Verify the bump landed
         if: ${{ steps.next.outputs.skip != 'true' }}
         env:

@@ -56,8 +56,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      # rustls compiles ring, so the musl target needs a C toolchain. Native
-      # musl-tools on a runner of the same architecture is enough.
+      # musl-tools for the target C toolchain, native on a runner of the same
+      # architecture.
       - name: Install the musl toolchain
         run: |
           sudo apt-get update -qq
@@ -66,7 +66,10 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }}
       - name: The shipped binary must need no interpreter or shared libraries
         run: |
-          file target/${{ matrix.target }}/release/steamtrain | grep -q "statically linked"
+          # static-pie is what a pure-Rust musl build produces; plain "statically
+          # linked" is what a C dependency used to force. Both are static.
+          file target/${{ matrix.target }}/release/steamtrain \
+            | grep -qE "static-pie linked|statically linked"
       - name: Install nfpm
         run: |
           case "${{ matrix.arch }}" in
