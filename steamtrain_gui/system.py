@@ -24,12 +24,13 @@ class TimerState:
     rather than showing a ticked box for a timer that will not fire.
     """
 
-    def __init__(self, session, installed, enabled, active, next_run):
+    def __init__(self, session, installed, enabled, active, next_run, spent=False):
         self.session = session      # is there a systemd user session at all
         self.installed = installed  # are the unit files present
         self.enabled = enabled
         self.active = active
         self.next_run = next_run    # human-readable, or None
+        self.spent = spent          # active, but with no elapse point left
 
     @property
     def controllable(self):
@@ -49,7 +50,15 @@ class TimerState:
             return (f"{TIMER_UNIT} is not installed — nothing runs on a "
                     f"schedule; press Apply when you want options written")
         if self.running:
-            return f"running — next run {self.next_run}" if self.next_run else "running"
+            # systemd's "elapsed" sub-state: switched on, counting down to
+            # nothing. Naming it is the whole point - this is the state a tick
+            # box on its own reports as healthy.
+            if self.spent:
+                return ("on, but no further run is scheduled — switch it off "
+                        "and on again, or reboot")
+            if self.next_run:
+                return f"running — next run {self.next_run}"
+            return "running — a run is starting now"
         if self.enabled:
             return "enabled for next login, but not counting down right now"
         return "off — nothing runs on its own; press Apply when you want a run"
@@ -67,6 +76,7 @@ def timer_state(runner=None):
                         "--property=LoadState",
                         "--property=UnitFileState",
                         "--property=ActiveState",
+                        "--property=SubState",
                         "--property=NextElapseUSecRealtime"])
     except (OSError, subprocess.SubprocessError):
         return _offline()
@@ -96,6 +106,7 @@ def timer_state(runner=None):
         enabled=values.get("UnitFileState", "") == "enabled",
         active=values.get("ActiveState", "") == "active",
         next_run=next_run,
+        spent=values.get("SubState", "") == "elapsed",
     )
 
 

@@ -200,7 +200,7 @@ class SchedulingRowTest(unittest.TestCase):
 
     def state(self, **kwargs):
         fields = dict(session=True, installed=True, enabled=False,
-                      active=False, next_run=None)
+                      active=False, next_run=None, spent=False)
         fields.update(kwargs)
         return system.TimerState(**fields)
 
@@ -215,6 +215,10 @@ class SchedulingRowTest(unittest.TestCase):
         win = self.make(self.state(enabled=True, active=False))
         self.assertFalse(win.timer_checkbox.isChecked())
         self.assertIn("not counting down", win.timer_detail.text())
+
+    def test_elapsed_timer_is_not_dressed_up_as_a_working_one(self):
+        win = self.make(self.state(enabled=True, active=True, spent=True))
+        self.assertIn("no further run is scheduled", win.timer_detail.text())
 
     def test_off_says_nothing_runs_on_its_own(self):
         win = self.make(self.state())

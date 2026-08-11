@@ -2,8 +2,18 @@
 Description=Periodically set Steam launch options for newly installed games
 
 [Timer]
+# Calendar rather than monotonic, because this timer is switched on by hand
+# long after boot. A monotonic pair (OnBootSec + OnUnitActiveSec) has both of
+# its elapse points in the past by then, so systemd starts the unit straight
+# into "active (elapsed)": enabled, active, Trigger: n/a, and it never fires
+# again until the next reboot. An on-switch that silently means "not until you
+# reboot" is exactly the hidden state this tool must not have.
+#
+# Persistent= also only does anything for a calendar timer: with it, a run
+# missed while the machine was off or suspended happens shortly after resume
+# instead of being skipped.
 OnBootSec=2min
-OnUnitActiveSec=30min
+OnCalendar=*:0/30
 Persistent=true
 
 [Install]

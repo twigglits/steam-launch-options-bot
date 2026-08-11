@@ -17,6 +17,7 @@ SHOW_ENABLED = (
     "LoadState=loaded\n"
     "UnitFileState=enabled\n"
     "ActiveState=active\n"
+    "SubState=waiting\n"
     "NextElapseUSecRealtime=Fri 2026-07-24 16:30:00 SAST\n"
 )
 SHOW_DISABLED = (
@@ -64,6 +65,19 @@ class TimerStateTest(unittest.TestCase):
         self.assertTrue(state.enabled)
         self.assertFalse(state.active)
         self.assertFalse(state.running)
+
+    def test_elapsed_timer_is_not_reported_as_a_scheduled_run(self):
+        """systemd's "active (elapsed)": switched on, will never fire again.
+
+        A monotonic-only timer enabled after boot lands here, and a tick box on
+        its own would call it healthy.
+        """
+        state = system.timer_state(runner=lambda argv, timeout=15: Fake(
+            "LoadState=loaded\nUnitFileState=enabled\nActiveState=active\n"
+            "SubState=elapsed\nNextElapseUSecRealtime=\n"))
+        self.assertTrue(state.spent)
+        self.assertIsNone(state.next_run)
+        self.assertIn("no further run is scheduled", state.describe())
 
     def test_absent_unit_is_reported_apart_from_being_switched_off(self):
         """A CLI-only install has no unit; the switch cannot turn it on."""
