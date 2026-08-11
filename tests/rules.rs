@@ -214,7 +214,6 @@ fn load_config_fills_missing_keys_from_defaults() {
     let config = rules::load_config(&path).unwrap();
     assert!(!config.flag("enable_gamemode"));
     assert!(config.flag("enable_nvapi"), "defaulted");
-    assert_eq!(config.advisor_command(), "claude -p");
 }
 
 #[test]

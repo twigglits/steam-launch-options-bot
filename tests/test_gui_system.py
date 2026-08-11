@@ -1,10 +1,7 @@
-"""Per-user timer control and the autostart entry. Qt-free, headless."""
+"""Per-user timer control. Qt-free, headless."""
 
 import subprocess
-import tempfile
 import unittest
-from pathlib import Path
-from unittest import mock
 
 from steamtrain_gui import system
 
@@ -17,14 +14,28 @@ class Fake:
 
 
 SHOW_ENABLED = (
+    "LoadState=loaded\n"
     "UnitFileState=enabled\n"
     "ActiveState=active\n"
     "NextElapseUSecRealtime=Fri 2026-07-24 16:30:00 SAST\n"
 )
 SHOW_DISABLED = (
+    "LoadState=loaded\n"
     "UnitFileState=disabled\n"
     "ActiveState=inactive\n"
     "NextElapseUSecRealtime=n/a\n"
+)
+SHOW_ENABLED_NOT_STARTED = (
+    "LoadState=loaded\n"
+    "UnitFileState=enabled\n"
+    "ActiveState=inactive\n"
+    "NextElapseUSecRealtime=n/a\n"
+)
+SHOW_ABSENT = (
+    "LoadState=not-found\n"
+    "UnitFileState=\n"
+    "ActiveState=inactive\n"
+    "NextElapseUSecRealtime=\n"
 )
 
 
@@ -34,13 +45,33 @@ class TimerStateTest(unittest.TestCase):
         self.assertTrue(state.session)
         self.assertTrue(state.enabled)
         self.assertTrue(state.active)
+        self.assertTrue(state.running)
         self.assertEqual("Fri 2026-07-24 16:30:00 SAST", state.next_run)
+        self.assertIn("Fri 2026-07-24 16:30:00 SAST", state.describe())
 
     def test_disabled_timer_has_no_next_run(self):
         state = system.timer_state(runner=lambda argv, timeout=15: Fake(SHOW_DISABLED))
         self.assertTrue(state.session)
         self.assertFalse(state.enabled)
+        self.assertFalse(state.running)
         self.assertIsNone(state.next_run)
+        self.assertIn("nothing runs on its own", state.describe())
+
+    def test_enabled_but_never_started_is_not_running(self):
+        """Enabled is what happens next boot; it is not "a run is scheduled"."""
+        state = system.timer_state(
+            runner=lambda argv, timeout=15: Fake(SHOW_ENABLED_NOT_STARTED))
+        self.assertTrue(state.enabled)
+        self.assertFalse(state.active)
+        self.assertFalse(state.running)
+
+    def test_absent_unit_is_reported_apart_from_being_switched_off(self):
+        """A CLI-only install has no unit; the switch cannot turn it on."""
+        state = system.timer_state(runner=lambda argv, timeout=15: Fake(SHOW_ABSENT))
+        self.assertTrue(state.session)
+        self.assertFalse(state.installed)
+        self.assertFalse(state.controllable)
+        self.assertIn("not installed", state.describe())
 
     def test_no_user_bus_is_a_normal_state_not_an_error(self):
         """A container or a plain ssh session has no user bus; the CLI still works."""
@@ -99,55 +130,6 @@ class SetTimerTest(unittest.TestCase):
             "", 1, "Unit steamtrain.timer is masked."))
         self.assertFalse(ok)
         self.assertIn("masked", message)
-
-
-class AutostartTest(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.home = Path(self.tmp.name)
-        patcher = mock.patch.dict("os.environ", {}, clear=False)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        import os
-        os.environ.pop("XDG_CONFIG_HOME", None)
-
-    def test_absent_by_default(self):
-        self.assertFalse(system.autostart_enabled(home=self.home))
-
-    def test_enabling_writes_a_valid_entry(self):
-        ok, _ = system.set_autostart(True, home=self.home)
-        self.assertTrue(ok)
-        path = system.autostart_path(home=self.home)
-        self.assertTrue(path.is_file())
-        body = path.read_text()
-        self.assertIn("[Desktop Entry]", body)
-        self.assertIn("Exec=steamtrain-gui --tray", body)
-
-    def test_disabling_removes_it(self):
-        system.set_autostart(True, home=self.home)
-        system.set_autostart(False, home=self.home)
-        self.assertFalse(system.autostart_enabled(home=self.home))
-
-    def test_disabling_when_absent_is_not_an_error(self):
-        ok, message = system.set_autostart(False, home=self.home)
-        self.assertTrue(ok, message)
-
-    def test_respects_xdg_config_home(self):
-        import os
-        other = Path(self.tmp.name) / "xdg"
-        os.environ["XDG_CONFIG_HOME"] = str(other)
-        try:
-            system.set_autostart(True)
-            self.assertTrue((other / "autostart" / system.AUTOSTART_NAME).is_file())
-        finally:
-            os.environ.pop("XDG_CONFIG_HOME")
-
-    def test_nothing_is_ever_written_to_etc_xdg(self):
-        """The package must ship no system-wide autostart; only the user opts in."""
-        path = system.autostart_path(home=self.home)
-        self.assertNotIn("/etc/xdg", str(path))
-        self.assertIn(str(self.home), str(path))
 
 
 if __name__ == "__main__":

@@ -136,7 +136,6 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use steamtrain::advisor::Fetcher;
 use steamtrain::cli;
 use steamtrain::doctor;
 use steamtrain::proc::{CommandRunner, Output, RunError};
@@ -227,17 +226,6 @@ impl SystemProbe for FakeProbe {
 }
 
 #[derive(Default)]
-pub struct FakeFetcher {
-    pub body: Option<String>,
-}
-
-impl Fetcher for FakeFetcher {
-    fn get(&self, _url: &str) -> Result<String, String> {
-        self.body.clone().ok_or_else(|| "offline".to_string())
-    }
-}
-
-#[derive(Default)]
 pub struct FakeRunner {
     pub stdout: String,
     pub status: Option<i32>,
@@ -274,7 +262,6 @@ impl CommandRunner for FakeRunner {
 /// under redirect_stdout.
 pub struct Cli {
     pub probe: FakeProbe,
-    pub fetch: FakeFetcher,
     pub runner: FakeRunner,
     pub steam_running: bool,
     pub doctor: doctor::Options,
@@ -284,7 +271,6 @@ impl Cli {
     pub fn new(vendor: &str) -> Self {
         Cli {
             probe: FakeProbe::with_vendor(vendor),
-            fetch: FakeFetcher::default(),
             runner: FakeRunner::default(),
             steam_running: false,
             // A path that cannot exist, so warn_legacy stays silent and the
@@ -314,7 +300,6 @@ impl Cli {
             let deps = cli::Deps {
                 probe: &self.probe,
                 is_running: &is_running,
-                fetch: &self.fetch,
                 runner: &self.runner,
                 doctor: self.doctor.clone(),
             };

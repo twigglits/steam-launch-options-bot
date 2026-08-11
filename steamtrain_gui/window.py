@@ -1,8 +1,8 @@
-"""The settings window: the primary entry point, and sufficient on its own.
+"""The settings window: the only surface steamtrain has.
 
-Nothing here is reachable only from the tray. A large share of users - everyone
-on stock GNOME - will never see a tray icon, so every capability lives in this
-window and the tray is a shortcut to it.
+There is no tray icon and no background presence: when this window is closed,
+the only thing that can still act is the systemd timer, and whether that is
+running is stated at the top of the window rather than left to be discovered.
 """
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
@@ -169,16 +169,14 @@ class MigrationDialog(QDialog):
 
 class MainWindow(QMainWindow):
     quitRequested = pyqtSignal()
-    stateRefreshed = pyqtSignal(object)  # the latest scan Run, for the tray
 
-    def __init__(self, gui_version, core_version, tray_available=False, parent=None):
+    def __init__(self, gui_version, core_version, parent=None):
         super().__init__(parent)
         self.setWindowTitle("steamtrain")
         self.resize(1000, 640)
 
         self._gui_version = gui_version
         self._core_version = core_version
-        self._tray_available = tray_available
         self._degraded = False
         self._last_run = None
 
@@ -192,6 +190,15 @@ class MainWindow(QMainWindow):
         # Deferred rather than called here: starting a worker before the event
         # loop exists races with teardown if the process never reaches exec().
         QTimer.singleShot(0, self.refresh)
+
+        # The timer can be switched on or off from outside this window
+        # (systemctl, another session), so the row is re-read on a clock rather
+        # than only after a Core run. Cheap: one `systemctl show`.
+        self._timer_poll = QTimer(self)
+        self._timer_poll.setInterval(5000)
+        self._timer_poll.timeout.connect(self._refresh_timer_row)
+        self._timer_poll.start()
+        self._refresh_timer_row()
 
     # ---------------------------------------------------------------- build
 
@@ -230,8 +237,6 @@ class MainWindow(QMainWindow):
         self.table.horizontalHeader().setSectionResizeMode(
             models.COL_STATUS, QHeaderView.ResizeMode.ResizeToContents)
         layout.addWidget(self.table, stretch=1)
-
-        layout.addWidget(self._build_preferences())
         self._build_shortcuts()
 
     def _build_status(self):
@@ -241,14 +246,16 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout()
         self.timer_checkbox = QCheckBox("Run automatically")
         self.timer_checkbox.setToolTip(
-            "Checks for newly installed games periodically and applies options.")
+            "Every 30 minutes, apply options to any newly installed game. "
+            "Off by default: nothing runs on a schedule unless you tick this.")
         self.timer_checkbox.toggled.connect(self._on_timer_toggled)
         self.timer_detail = QLabel("")
+        self.timer_detail.setWordWrap(True)
         row.addWidget(self.timer_checkbox)
         row.addWidget(self.timer_detail, stretch=1)
         holder = QWidget()
         holder.setLayout(row)
-        form.addRow("Scheduling:", holder)
+        form.addRow("Scheduled runs:", holder)
 
         self.steam_label = QLabel("—")
         form.addRow("Steam:", self.steam_label)
@@ -288,32 +295,6 @@ class MainWindow(QMainWindow):
         row.addStretch(1)
         row.addWidget(self.refresh_button)
         return row
-
-    def _build_preferences(self):
-        box = QGroupBox("Tray")
-        layout = QVBoxLayout(box)
-
-        self.autostart_checkbox = QCheckBox("Show tray icon at login")
-        self.autostart_checkbox.setChecked(system.autostart_enabled())
-        self.autostart_checkbox.toggled.connect(self._on_autostart_toggled)
-
-        self.notify_checkbox = QCheckBox("Notify me when launch options change")
-        self.notify_checkbox.setChecked(notifications_enabled())
-        self.notify_checkbox.toggled.connect(set_notifications_enabled)
-
-        layout.addWidget(self.autostart_checkbox)
-        layout.addWidget(self.notify_checkbox)
-
-        if not self._tray_available:
-            for widget in (self.autostart_checkbox, self.notify_checkbox):
-                widget.setEnabled(False)
-            note = QLabel(
-                "This desktop has no system tray, so steamtrain does not show "
-                "one. Open this window from your applications menu instead — "
-                "everything is available here.")
-            note.setWordWrap(True)
-            layout.addWidget(note)
-        return box
 
     def _build_shortcuts(self):
         for text, sequence, slot in (
@@ -418,11 +399,9 @@ class MainWindow(QMainWindow):
             self._set_steam_running(bool(result["steam_running"]))
 
         self._refresh_timer_row()
-        self.stateRefreshed.emit(run)
 
     def _on_run_failed(self, message):
         self.banner.show_message(message, "error")
-        self.stateRefreshed.emit(None)
 
     def _set_steam_running(self, running):
         self.steam_label.setText("running" if running else "not running")
@@ -452,19 +431,13 @@ class MainWindow(QMainWindow):
     def _refresh_timer_row(self):
         state = system.timer_state()
         self.timer_checkbox.blockSignals(True)
-        self.timer_checkbox.setChecked(state.enabled)
+        self.timer_checkbox.setChecked(state.running)
         self.timer_checkbox.blockSignals(False)
-        self.timer_checkbox.setEnabled(state.controllable)
-        if not state.controllable:
-            self.timer_detail.setText(
-                "no systemd user session here — run steamtrain yourself, or "
-                "from your own scheduler")
-        elif state.enabled and state.next_run:
-            self.timer_detail.setText(f"next run {state.next_run}")
-        elif state.enabled:
-            self.timer_detail.setText("enabled")
-        else:
-            self.timer_detail.setText("off — nothing runs on its own")
+        self.timer_checkbox.setEnabled(state.controllable and not self._degraded)
+        self.timer_detail.setText(state.describe())
+        # Read by a screen reader as one statement; the checkbox alone would
+        # say "checked" without saying when anything actually happens.
+        self.timer_detail.setAccessibleName(f"Scheduled runs: {state.describe()}")
 
     def _on_timer_toggled(self, checked):
         ok, message = system.set_timer(checked)
@@ -475,15 +448,6 @@ class MainWindow(QMainWindow):
         # Re-read rather than trusting the request: the switch must show what
         # systemd actually did.
         self._refresh_timer_row()
-
-    def _on_autostart_toggled(self, checked):
-        ok, message = system.set_autostart(checked)
-        if not ok:
-            self.banner.show_message(
-                f"Could not change the login setting: {message}", "error")
-            self.autostart_checkbox.blockSignals(True)
-            self.autostart_checkbox.setChecked(system.autostart_enabled())
-            self.autostart_checkbox.blockSignals(False)
 
     # ------------------------------------------------------------- degraded
 
@@ -499,21 +463,3 @@ class MainWindow(QMainWindow):
                        self.revert_button, self.refresh_button):
             button.setEnabled(False)
         self.timer_checkbox.setEnabled(False)
-
-
-# Interface-only preferences. Deliberately not in the Core's config.json, which
-# belongs to the CLI and the timer; this is which checkbox the user ticked.
-def _settings():
-    from PyQt6.QtCore import QSettings
-    return QSettings("steamtrain", "steamtrain-gui")
-
-
-def notifications_enabled():
-    value = _settings().value("notifications", True)
-    if isinstance(value, str):
-        return value.lower() not in ("false", "0", "no")
-    return bool(value)
-
-
-def set_notifications_enabled(enabled):
-    _settings().setValue("notifications", bool(enabled))

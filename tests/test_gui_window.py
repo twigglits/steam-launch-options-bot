@@ -1,4 +1,4 @@
-"""Settings window, table model and tray. Headless via QT_QPA_PLATFORM=offscreen.
+"""Settings window and table model. Headless via QT_QPA_PLATFORM=offscreen.
 
 These run without a display, and deliberately without an event loop, so the
 window's deferred initial refresh never fires and no real steamtrain process
@@ -13,8 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from tests.qtapp import HAVE_QT, ensure_app
 
 if HAVE_QT:
-    from PyQt6.QtGui import QIcon
-    from steamtrain_gui import client, models, tray as tray_mod, window
+    from steamtrain_gui import client, models, system, window
 
 
 def setUpModule():
@@ -108,8 +107,8 @@ class ModelTest(unittest.TestCase):
 
 @unittest.skipUnless(HAVE_QT, "PyQt6 not installed")
 class WindowTest(unittest.TestCase):
-    def make(self, tray_available=False):
-        win = window.MainWindow("0.5.0", "0.5.0", tray_available=tray_available)
+    def make(self):
+        win = window.MainWindow("0.5.0", "0.5.0")
         self.addCleanup(win.runner.wait)
         self.addCleanup(win.deleteLater)
         return win
@@ -174,15 +173,6 @@ class WindowTest(unittest.TestCase):
             self.assertFalse(button.isEnabled())
         self.assertFalse(win.timer_checkbox.isEnabled())
 
-    def test_tray_preferences_disabled_without_a_tray_host(self):
-        win = self.make(tray_available=False)
-        self.assertFalse(win.autostart_checkbox.isEnabled())
-        self.assertFalse(win.notify_checkbox.isEnabled())
-
-    def test_tray_preferences_available_with_a_tray_host(self):
-        win = self.make(tray_available=True)
-        self.assertTrue(win.autostart_checkbox.isEnabled())
-
     def test_progress_records_drive_the_progress_bar(self):
         win = self.make()
         win._on_record({"kind": "progress", "done": 12, "total": 24})
@@ -192,6 +182,53 @@ class WindowTest(unittest.TestCase):
     def test_versions_of_both_halves_are_shown(self):
         win = self.make()
         self.assertIn("0.5.0", win.version_label.text())
+
+
+@unittest.skipUnless(HAVE_QT, "PyQt6 not installed")
+class SchedulingRowTest(unittest.TestCase):
+    """The window must never claim a timer is running when it is not."""
+
+    def make(self, state):
+        win = window.MainWindow("0.5.0", "0.5.0")
+        self.addCleanup(win.runner.wait)
+        self.addCleanup(win.deleteLater)
+        original = system.timer_state
+        system.timer_state = lambda: state
+        self.addCleanup(lambda: setattr(system, "timer_state", original))
+        win._refresh_timer_row()
+        return win
+
+    def state(self, **kwargs):
+        fields = dict(session=True, installed=True, enabled=False,
+                      active=False, next_run=None)
+        fields.update(kwargs)
+        return system.TimerState(**fields)
+
+    def test_running_timer_is_ticked_and_names_the_next_run(self):
+        win = self.make(self.state(enabled=True, active=True,
+                                   next_run="Fri 2026-07-24 16:30:00 SAST"))
+        self.assertTrue(win.timer_checkbox.isChecked())
+        self.assertIn("16:30", win.timer_detail.text())
+
+    def test_enabled_but_inactive_is_not_shown_as_running(self):
+        """The state that would otherwise be a silent lie: ticked, never fires."""
+        win = self.make(self.state(enabled=True, active=False))
+        self.assertFalse(win.timer_checkbox.isChecked())
+        self.assertIn("not counting down", win.timer_detail.text())
+
+    def test_off_says_nothing_runs_on_its_own(self):
+        win = self.make(self.state())
+        self.assertFalse(win.timer_checkbox.isChecked())
+        self.assertIn("nothing runs on its own", win.timer_detail.text())
+
+    def test_missing_unit_disables_the_switch_rather_than_failing_on_click(self):
+        win = self.make(self.state(installed=False))
+        self.assertFalse(win.timer_checkbox.isEnabled())
+        self.assertIn("not installed", win.timer_detail.text())
+
+    def test_no_user_session_disables_the_switch(self):
+        win = self.make(self.state(session=False, installed=False))
+        self.assertFalse(win.timer_checkbox.isEnabled())
 
 
 @unittest.skipUnless(HAVE_QT, "PyQt6 not installed")
@@ -235,52 +272,6 @@ class MigrationDialogTest(unittest.TestCase):
         joined = " ".join(label.text() for label in dialog.findChildren(QLabel))
         self.assertIn(".config/steamtrain", joined)
         self.assertIn(".local/state/steamtrain", joined)
-
-
-@unittest.skipUnless(HAVE_QT, "PyQt6 not installed")
-class TrayTest(unittest.TestCase):
-    @staticmethod
-    def _solid_base():
-        from PyQt6.QtGui import QColor, QPixmap
-        pixmap = QPixmap(64, 64)
-        pixmap.fill(QColor("#c08a20"))
-        return QIcon(pixmap)
-
-    def test_states_produce_visually_distinct_icons(self):
-        icons = {state: tray_mod._badge(self._solid_base(), state)
-                 for state in (tray_mod.STATE_HEALTHY, tray_mod.STATE_ATTENTION,
-                               tray_mod.STATE_BLOCKED)}
-        images = {state: icon.pixmap(64, 64).toImage()
-                  for state, icon in icons.items()}
-        self.assertNotEqual(images[tray_mod.STATE_HEALTHY],
-                            images[tray_mod.STATE_ATTENTION])
-        self.assertNotEqual(images[tray_mod.STATE_ATTENTION],
-                            images[tray_mod.STATE_BLOCKED])
-
-    def test_states_stay_distinct_even_with_no_icon_installed(self):
-        """A missing theme icon must not collapse all three states into one."""
-        icons = {state: tray_mod._badge(QIcon(), state)
-                 for state in (tray_mod.STATE_HEALTHY, tray_mod.STATE_ATTENTION,
-                               tray_mod.STATE_BLOCKED)}
-        images = {state: icon.pixmap(64, 64).toImage()
-                  for state, icon in icons.items()}
-        self.assertNotEqual(images[tray_mod.STATE_HEALTHY],
-                            images[tray_mod.STATE_ATTENTION])
-        self.assertNotEqual(images[tray_mod.STATE_ATTENTION],
-                            images[tray_mod.STATE_BLOCKED])
-
-    def test_every_state_has_a_tooltip_in_words(self):
-        for state in (tray_mod.STATE_HEALTHY, tray_mod.STATE_ATTENTION,
-                      tray_mod.STATE_BLOCKED):
-            self.assertTrue(tray_mod.TOOLTIPS[state].strip())
-
-    def test_tray_availability_has_a_single_call_site(self):
-        """AD-14: two answers to this question eventually disagree."""
-        import inspect
-        from steamtrain_gui import app as app_mod
-        sources = inspect.getsource(window) + inspect.getsource(app_mod)
-        self.assertNotIn("isSystemTrayAvailable", sources)
-        self.assertIn("isSystemTrayAvailable", inspect.getsource(tray_mod))
 
 
 if __name__ == "__main__":

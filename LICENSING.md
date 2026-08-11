@@ -6,7 +6,7 @@ deliberate, and worth understanding before you vendor, fork, or repackage it.
 | Package | Source | Licence |
 | --- | --- | --- |
 | `steamtrain` (Core: CLI, rule engine, systemd units) | `src/`, `Cargo.toml`, `systemd/`, `install.sh`, `uninstall.sh`, `scripts/` | **MIT** |
-| `steamtrain-gui` (settings window, tray applet) | `steamtrain_gui/` | **GPL-3.0-or-later** |
+| `steamtrain-gui` (settings window) | `steamtrain_gui/` | **GPL-3.0-or-later** |
 
 ## Why they differ
 

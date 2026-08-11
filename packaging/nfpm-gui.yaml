@@ -1,4 +1,4 @@
-# GUI package: settings window and tray applet.
+# GUI package: the settings window.
 #
 # Separate from the Core so that CLI, headless and server users never pull in
 # ~150MB of Qt, and so the licences stay separable: the Core is MIT with no
@@ -24,13 +24,14 @@ homepage: https://github.com/twigglits/steamtrain
 license: GPL-3.0-or-later
 description: |
   Desktop interface for steamtrain.
-  Confirms what steamtrain detected about your machine, switches the automatic
-  timer on, shows whether Steam is currently blocking a write, and lists the
-  launch options proposed for each installed game before anything is written.
+  Confirms what steamtrain detected about your machine, says whether the
+  scheduled timer is actually running and lets you switch it on or off, shows
+  whether Steam is currently blocking a write, and lists the launch options
+  proposed for each installed game before anything is written.
   .
-  The settings window is the primary entry point and is sufficient on its own.
-  The tray icon is a convenience and is absent on desktops that have no system
-  tray, such as stock GNOME.
+  One window and nothing else: no tray icon, no background process. Closing it
+  quits. The systemd timer is the only thing that can run without it, and the
+  window says so.
 
 # The exact-version pin matters: the GUI speaks a versioned wire protocol to
 # the Core, so a mismatched pair must fail at install time rather than at

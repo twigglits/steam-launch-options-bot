@@ -33,8 +33,7 @@ GUI = Path("steamtrain_gui")
 #   serde       - derive support for serde_json
 #   serde_json  - config, state and the --json wire format
 #   shlex       - POSIX splitting for the override safety gate
-#   ureq        - the advisor's one HTTPS GET, over rustls so no system TLS
-ALLOWED_CRATES = {"clap", "serde", "serde_json", "shlex", "ureq"}
+ALLOWED_CRATES = {"clap", "serde", "serde_json", "shlex"}
 
 
 def declared_dependencies():

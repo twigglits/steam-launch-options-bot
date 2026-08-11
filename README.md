@@ -43,6 +43,10 @@ known to break games (e.g. it never forces `SDL_VIDEODRIVER=wayland`).
 
 ## Safety guarantees
 
+- **Nothing runs on a schedule unless you switch it on.** No install path —
+  package, `install.sh`, or the desktop interface — enables the timer for you.
+  Until you opt in, steamtrain only ever runs when you run it, and the settings
+  window states whether the timer is actually running at the top of the window.
 - **Never overwrites options a human set.** It only writes when the current
   value is empty or byte-identical to what it wrote previously (tracked in
   `~/.local/state/steamtrain/state.json`). Your manual tweaks
@@ -74,8 +78,8 @@ On arm64, substitute `_arm64.deb` or `.aarch64.rpm` for the core package;
 `steamtrain-gui` is still Python and ships a single artifact for every
 architecture, hence `all`/`noarch`.
 
-`steamtrain-gui` is the desktop interface — a settings window in your
-application menu, plus a tray icon on desktops that have a system tray. It is
+`steamtrain-gui` is the desktop interface — one settings window in your
+application menu, no tray icon and no background process. It is
 optional: drop that argument for a CLI-only install. It pins the core's exact
 version, so install the pair in one command rather than one after the other.
 
@@ -118,9 +122,10 @@ are removed.
 ```
 
 This builds with `cargo build --release`, installs the binary to
-`~/.local/bin/steamtrain`, and installs + starts a systemd **user** timer
-(2 min after boot, then every 30 min — new installs get options
-automatically). Restart Steam to see applied options take effect in the UI.
+`~/.local/bin/steamtrain`, and writes the systemd **user** units without
+enabling them. Like the packages, it schedules nothing: run `steamtrain apply`
+yourself, or opt in to the timer (see below). Restart Steam to see applied
+options take effect in the UI.
 
 Building from source needs a Rust toolchain. If you would rather not install
 one, every release also ships a prebuilt binary tarball alongside the
@@ -131,10 +136,26 @@ without installing anything, for switching to a distribution package.
 
 The installer checks for `cargo` first (printing a per-distro install hint if
 it is missing — `pacman`/`dnf`/`apt`, never run for you). If there is no
-systemd user session it warns and skips the timer, leaving a working CLI. When
+systemd user session it warns and skips the units, leaving a working CLI. When
 run in a terminal it finishes by launching the hardware setup wizard (below);
 piped/non-interactive installs skip it and print a reminder to run
 `steamtrain setup`.
+
+### Scheduling (opt-in)
+
+Nothing runs on its own until you say so. Turn it on with the **Run
+automatically** switch in the settings window, or:
+
+```sh
+systemctl --user enable --now steamtrain.timer   # 2 min after boot, then every 30 min
+systemctl --user list-timers steamtrain.timer    # confirm it is really running
+systemctl --user disable --now steamtrain.timer  # stop it
+journalctl --user -u steamtrain.service -e       # what it did
+```
+
+The settings window reads the same state back from systemd rather than
+remembering what it asked for, so a timer that was enabled but never started —
+ticked box, no run — is reported as exactly that.
 
 ### Supported distributions
 
@@ -156,9 +177,6 @@ steamtrain apply --dry-run  # what would change, writing nothing
 steamtrain apply            # write (skipped safely if Steam is running)
 steamtrain status           # what the tool currently manages
 steamtrain revert           # restore managed options to empty
-steamtrain advise            # list installed games (no appid to look up)
-steamtrain advise witcher    # LLM-propose an override, matched by game name (review only)
-steamtrain advise witcher --write   # save the reviewed proposal into overrides
 steamtrain doctor           # report install problems (exits 2 if any are unfixed)
 steamtrain doctor --fix     # remove a conflicting old ~/.local install
 ```
@@ -215,21 +233,6 @@ the menu treats end-of-input as Skip.
 - `overrides` — appid → launch options used verbatim; `{auto}` expands to the
   generated baseline. This is where ProtonDB-sourced, hardware-vetted tips go.
 - `exclude` — appids the tool must never touch.
-
-## LLM advisor (hybrid, opt-in)
-
-The scheduled bot stays fully deterministic and offline. `steamtrain advise <game>`
-(a game name, or run it bare to list installed games — no appid to look up)
-is a separate, on-demand step for the one thing rules can't do well: judging a
-*specific game's* community launch tips against *your* hardware.
-
-It fetches the game's ProtonDB summary, asks an LLM (default `claude -p`, set
-`advisor_command` in config to change it) to filter that to your GPU/session,
-and prints a proposed override with its reasoning. The proposal is **validated**
-(launch options are executed code) and **never auto-applied** — re-run with
-`--write` to save it into `overrides`, after which the normal `steamtrain apply`/timer
-path applies it with all existing safety guarantees. The advisor never runs on
-the timer; no API key is stored (Claude Code owns auth).
 
 ## Running as a root system service instead
 

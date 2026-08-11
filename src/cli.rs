@@ -1,4 +1,4 @@
-//! Command-line interface: scan / apply / status / revert / setup / advise / doctor.
+//! Command-line interface: scan / apply / status / revert / setup / doctor.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 use clap::{Args, Parser, Subcommand};
 use serde_json::{Map, Value};
 
-use crate::advisor::{self, Fetcher};
 use crate::apply::{self, ApplyError, Change, State};
 use crate::codes::{Action, Guardrail, Outcome};
 use crate::doctor::{self, Finding};
@@ -93,8 +92,6 @@ enum Command {
     Status(CommonArgs),
     /// restore every option this tool set back to empty
     Revert(CommonArgs),
-    /// LLM-propose a per-game override for one appid (needs network + claude)
-    Advise(AdviseArgs),
     /// confirm detected hardware; pick or clear the GPU vendor if wrong
     Setup(SetupArgs),
     /// diagnose install problems; --fix removes an old ~/.local install
@@ -145,17 +142,6 @@ struct ApplyArgs {
 }
 
 #[derive(Args, Debug, Clone)]
-struct AdviseArgs {
-    #[command(flatten)]
-    locations: Locations,
-    /// game name (any part, case-insensitive) or appid; omit to list installed games
-    game: Option<String>,
-    /// save the proposal into config overrides (re-run after reviewing)
-    #[arg(long)]
-    write: bool,
-}
-
-#[derive(Args, Debug, Clone)]
 struct SetupArgs {
     #[arg(long, value_name = "PATH")]
     config: Option<PathBuf>,
@@ -198,13 +184,11 @@ pub struct Io<'a> {
 pub struct Deps<'a> {
     pub probe: &'a dyn SystemProbe,
     pub is_running: &'a dyn Fn(&Path) -> bool,
-    pub fetch: &'a dyn Fetcher,
     pub runner: &'a dyn CommandRunner,
     pub doctor: doctor::Options,
 }
 
 static REAL_PROBE: sysinfo::RealProbe = sysinfo::RealProbe;
-static REAL_FETCHER: advisor::RealFetcher = advisor::RealFetcher;
 static REAL_RUNNER: proc::RealRunner = proc::RealRunner;
 static REAL_IS_RUNNING: fn(&Path) -> bool = steam::is_steam_running;
 
@@ -213,7 +197,6 @@ impl Default for Deps<'static> {
         Deps {
             probe: &REAL_PROBE,
             is_running: &REAL_IS_RUNNING,
-            fetch: &REAL_FETCHER,
             runner: &REAL_RUNNER,
             doctor: doctor::Options::default(),
         }
@@ -755,141 +738,6 @@ fn cmd_revert(args: &CommonArgs, io: &mut Io, deps: &Deps) -> Result<i32, CliErr
     }
 }
 
-// ---------------------------------------------------------------- advise
-
-/// (game, error) - pick one installed game by appid or name substring.
-///
-/// Exact appid wins; otherwise a case-insensitive name-substring match.
-/// Returns an error message when nothing matches or the name is ambiguous, so
-/// the caller never has to know an appid.
-fn resolve_game<'a>(games: &'a [Game], query: &str) -> Result<&'a Game, String> {
-    if let Some(game) = games.iter().find(|game| game.appid == query) {
-        return Ok(game);
-    }
-    let needle = query.to_lowercase();
-    let matches: Vec<&Game> = games
-        .iter()
-        .filter(|game| game.name.to_lowercase().contains(&needle))
-        .collect();
-    match matches.len() {
-        1 => Ok(matches[0]),
-        0 => Err(format!(
-            "no installed game matches {}. Run `steamtrain advise` to list them.",
-            crate::py_repr(query)
-        )),
-        count => {
-            let listing: Vec<String> = matches
-                .iter()
-                .map(|game| format!("  {:>8}  {}", game.appid, game.name))
-                .collect();
-            Err(format!(
-                "{} matches {count} games; be more specific:\n{}",
-                crate::py_repr(query),
-                listing.join("\n")
-            ))
-        }
-    }
-}
-
-fn list_installed(out: &mut dyn Write, games: &[Game]) {
-    let _ = writeln!(
-        out,
-        "{} installed game(s) — run `steamtrain advise <name>`:",
-        games.len()
-    );
-    let mut sorted: Vec<&Game> = games.iter().collect();
-    sorted.sort_by_key(|game| game.name.to_lowercase());
-    for game in sorted {
-        let _ = writeln!(
-            out,
-            "  {:>8}  {:<7}  {}",
-            game.appid,
-            game.runtime.as_str(),
-            game.name
-        );
-    }
-}
-
-fn cmd_advise(args: &AdviseArgs, io: &mut Io, deps: &Deps) -> Result<i32, CliError> {
-    let mut out = Emitter::new(&mut *io.out, false);
-    let Some(root) = context(args.locations.steam_root.as_deref(), &mut out, &mut *io.err) else {
-        return Ok(1);
-    };
-    let games = steam::installed_games(&root);
-    if games.is_empty() {
-        let _ = writeln!(io.err, "No installed games found on mounted libraries.");
-        return Ok(1);
-    }
-    let Some(query) = args.game.as_deref() else {
-        list_installed(out.writer(), &games);
-        return Ok(0);
-    };
-    let game = match resolve_game(&games, query) {
-        Ok(game) => game,
-        Err(message) => {
-            let _ = writeln!(io.err, "ERROR: {message}");
-            return Ok(1);
-        }
-    };
-
-    let config_path = args.locations.config_path();
-    let config = rules::load_config(&config_path)?;
-    let profile = profile_for(&config, deps, &mut *io.err);
-    let proposal = match advisor::advise(game, &profile, &config, deps.fetch, deps.runner) {
-        Ok(proposal) => proposal,
-        Err(err) => {
-            let _ = writeln!(io.err, "ERROR: {err}");
-            return Ok(1);
-        }
-    };
-
-    let _ = writeln!(
-        out.writer(),
-        "{}  (appid {}, {})",
-        proposal.name,
-        proposal.appid,
-        game.runtime.as_str()
-    );
-    let _ = writeln!(out.writer(), "  baseline  : {}", proposal.baseline);
-    let shown = proposal
-        .proposed
-        .as_deref()
-        .unwrap_or("(LLM: baseline already appropriate)");
-    let _ = writeln!(out.writer(), "  proposed  : {shown}");
-    let _ = writeln!(out.writer(), "  confidence: {}", proposal.confidence);
-    let _ = writeln!(out.writer(), "  reasoning : {}", proposal.reasoning);
-
-    let Some(proposed) = proposal.proposed.as_deref() else {
-        return Ok(0);
-    };
-    if !proposal.valid {
-        let _ = writeln!(io.err, "  REJECTED by safety check: {}", proposal.warning);
-        let _ = writeln!(
-            out.writer(),
-            "  Nothing written. Add it to overrides by hand only if you trust it."
-        );
-        return Ok(1);
-    }
-    if !args.write {
-        let _ = writeln!(
-            out.writer(),
-            "\nReview looks right? Re-run with --write to save it to overrides."
-        );
-        return Ok(0);
-    }
-    rules::save_override(&config_path, &proposal.appid, proposed)?;
-    let _ = writeln!(
-        out.writer(),
-        "\nSaved overrides[{}] = {proposed}",
-        proposal.appid
-    );
-    let _ = writeln!(
-        out.writer(),
-        "Nothing changed yet — the next `steamtrain apply` (or timer run) applies it."
-    );
-    Ok(0)
-}
-
 // ----------------------------------------------------------------- setup
 
 /// Menu "Skip" is distinct from "" (clear the override, restoring
@@ -1130,7 +978,7 @@ fn setup_interact(
         let _ = writeln!(
             out.writer(),
             "\nGPU autodetection failed, but config override gpu_vendor={quoted} is \
-             active — scan/apply/advise already use it."
+             active — scan/apply already use it."
         );
         let _ = writeln!(
             out.writer(),
@@ -1145,7 +993,7 @@ fn setup_interact(
         }
         let _ = writeln!(
             out.writer(),
-            "\nGPU vendor could not be autodetected. Pick it so scan/apply/advise set \
+            "\nGPU vendor could not be autodetected. Pick it so scan/apply set \
              vendor-appropriate options:"
         );
     }
@@ -1344,7 +1192,6 @@ fn json_enabled(command: &Command) -> bool {
         Command::Apply(args) => args.common.json,
         Command::Setup(args) => args.json,
         Command::Doctor(args) => args.json,
-        Command::Advise(_) => false,
     }
 }
 
@@ -1401,7 +1248,6 @@ pub fn main(argv: &[String], io: &mut Io, deps: &Deps) -> i32 {
         Command::Apply(args) => cmd_apply(args, io, deps),
         Command::Status(args) => cmd_status(args, io, deps),
         Command::Revert(args) => cmd_revert(args, io, deps),
-        Command::Advise(args) => cmd_advise(args, io, deps),
         Command::Setup(args) => cmd_setup(args, io, deps),
         Command::Doctor(args) => return cmd_doctor(args, io, deps),
     };
@@ -1426,49 +1272,5 @@ pub fn main(argv: &[String], io: &mut Io, deps: &Deps) -> i32 {
             }
             1
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::steam::Runtime;
-
-    fn game(appid: &str, name: &str) -> Game {
-        Game {
-            appid: appid.to_string(),
-            name: name.to_string(),
-            installdir: PathBuf::from("/tmp"),
-            library: PathBuf::from("/tmp"),
-            runtime: Runtime::Native,
-        }
-    }
-
-    #[test]
-    fn an_exact_appid_wins_over_a_name_match() {
-        let games = vec![game("100", "Alpha"), game("200", "100 Bullets")];
-        assert_eq!(resolve_game(&games, "100").unwrap().appid, "100");
-    }
-
-    #[test]
-    fn a_name_substring_matches_case_insensitively() {
-        let games = vec![game("100", "The Witcher 3")];
-        assert_eq!(resolve_game(&games, "witcher").unwrap().appid, "100");
-    }
-
-    #[test]
-    fn an_ambiguous_name_lists_the_candidates() {
-        let games = vec![game("100", "Portal"), game("200", "Portal 2")];
-        let err = resolve_game(&games, "portal").unwrap_err();
-        assert!(err.contains("matches 2 games"), "got {err}");
-        assert!(err.contains("100") && err.contains("200"), "got {err}");
-    }
-
-    #[test]
-    fn no_match_points_at_the_listing_command() {
-        let games = vec![game("100", "Portal")];
-        let err = resolve_game(&games, "quake").unwrap_err();
-        assert!(err.contains("'quake'"), "python-style quoting: {err}");
-        assert!(err.contains("steamtrain advise"), "got {err}");
     }
 }

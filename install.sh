@@ -77,6 +77,11 @@ install -m 0755 "$REPO_DIR/target/release/steamtrain" "$BIN_DIR/steamtrain"
 # systemd user session is optional: install the timer when available, else warn.
 # Any systemd step may still fail (no lingering session, masked unit); degrade
 # instead of aborting a half-finished install under `set -eu`.
+#
+# The unit is written but deliberately NOT enabled. An installer that schedules
+# writes to your Steam configuration without being asked is exactly the hidden
+# state this tool must not have: after this script, nothing runs until you say
+# so, either here or in the settings window.
 systemd_ok=0
 if command -v systemctl >/dev/null 2>&1 && systemctl --user daemon-reload 2>/dev/null; then
     # The shipped unit targets /usr/bin, which is where a distribution package
@@ -85,25 +90,25 @@ if command -v systemctl >/dev/null 2>&1 && systemctl --user daemon-reload 2>/dev
     if sed 's,^ExecStart=/usr/bin/steamtrain ,ExecStart=%h/.local/bin/steamtrain ,' \
            "$REPO_DIR/systemd/steamtrain.service" > "$UNIT_DIR/steamtrain.service" \
         && cp "$REPO_DIR/systemd/steamtrain.timer" "$UNIT_DIR/" \
-        && systemctl --user daemon-reload 2>/dev/null \
-        && systemctl --user enable --now steamtrain.timer 2>/dev/null; then
+        && systemctl --user daemon-reload 2>/dev/null; then
         systemd_ok=1
     fi
 fi
 if [ "$systemd_ok" = 0 ]; then
-    echo "WARNING: systemd user timer not installed; automatic scheduling skipped." >&2
-    echo "         The CLI still works - run 'steamtrain apply' yourself (or via" >&2
-    echo "         your own scheduler) to set launch options." >&2
+    echo "WARNING: systemd user timer not installed; there is no way to schedule" >&2
+    echo "         runs. The CLI still works - run 'steamtrain apply' yourself." >&2
 fi
 
-echo "Installed. Useful commands:"
+echo "Installed. Nothing runs on a schedule; nothing has been written to Steam."
 echo "  steamtrain scan                                          # see proposals"
 echo "  steamtrain apply --dry-run                               # plan without writing"
+echo "  steamtrain apply                                         # write them"
 if [ "$systemd_ok" = 1 ]; then
-    echo "  systemctl --user list-timers steamtrain.timer"
-    echo "  journalctl --user -u steamtrain.service -e"
-else
-    echo "  steamtrain apply                                        # no timer; run manually"
+    echo
+    echo "To have it run every 30 minutes for newly installed games:"
+    echo "  systemctl --user enable --now steamtrain.timer         # opt in"
+    echo "  systemctl --user list-timers steamtrain.timer          # confirm it is on"
+    echo "  systemctl --user disable --now steamtrain.timer        # opt back out"
 fi
 
 # Hardware setup wizard: only with an interactive terminal on both ends.

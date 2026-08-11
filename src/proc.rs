@@ -4,8 +4,8 @@
 //! free. Rust's standard library has neither a wait-with-timeout nor a safe way
 //! to write one pipe while reading two others: servicing them on one thread
 //! deadlocks the moment the child fills a buffer nobody is draining. Every
-//! subprocess in the Core goes through here - nvidia-smi in `sysinfo`,
-//! systemctl in `doctor`, and the LLM in `advisor`.
+//! subprocess in the Core goes through here - nvidia-smi in `sysinfo` and
+//! systemctl in `doctor`.
 
 use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
@@ -35,8 +35,8 @@ impl Output {
 #[derive(Debug)]
 pub enum RunError {
     /// The program is not on PATH. Callers distinguish this because "the
-    /// advisor command is not installed" is worth saying differently from
-    /// "the advisor command failed".
+    /// command is not installed" is worth saying differently from "the command
+    /// failed".
     NotFound(String),
     Timeout,
     Io(std::io::Error),

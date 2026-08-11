@@ -13,8 +13,8 @@ from pathlib import Path
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox
 
-from . import __version__, client, models, system, tray as tray_mod
-from .window import FirstRunDialog, MainWindow, MigrationDialog, notifications_enabled
+from . import __version__, client
+from .window import FirstRunDialog, MainWindow, MigrationDialog
 
 ICON_NAME = "steamtrain"
 LEGACY_SHADOWING = "legacy-install-shadowing"
@@ -129,14 +129,10 @@ def maybe_first_run(parent=None):
 
 def main(argv=None):
     argv = list(sys.argv if argv is None else argv)
-    start_in_tray = "--tray" in argv
-    argv = [a for a in argv if a != "--tray"]
-
     app = QApplication(argv)
     app.setApplicationName("steamtrain")
     app.setDesktopFileName("steamtrain")
-    icon = load_icon()
-    app.setWindowIcon(icon)
+    app.setWindowIcon(load_icon())
 
     _, error = check_core()
     if error:
@@ -160,60 +156,15 @@ def main(argv=None):
             return 1
         maybe_first_run()
 
-    has_tray = tray_available_safely()
-    window = MainWindow(__version__, core_version, tray_available=has_tray)
+    window = MainWindow(__version__, core_version)
     if degraded_reason:
         window.set_degraded(degraded_reason)
 
-    tray = None
-    if has_tray:
-        tray = tray_mod.Tray(icon, app)
-        _wire_tray(app, window, tray)
-        tray.show()
-
-    # With no tray there is nowhere to minimise to, so closing the window has
-    # to mean quitting rather than vanishing to an icon that does not exist.
-    app.setQuitOnLastWindowClosed(not has_tray)
+    # Closing the window quits: steamtrain keeps no background presence of its
+    # own. The systemd timer is the only thing that outlives this process, and
+    # the window says whether it is running.
     window.quitRequested.connect(app.quit)
-
-    if not (start_in_tray and has_tray):
-        window.show()
+    window.show()
 
     app.aboutToQuit.connect(window.runner.wait)
     return app.exec()
-
-
-def tray_available_safely():
-    try:
-        return tray_mod.tray_available()
-    except Exception:  # a broken tray host must not stop the window opening
-        return False
-
-
-def _wire_tray(app, window, tray):
-    tray.openRequested.connect(lambda: (window.show(), window.raise_(),
-                                        window.activateWindow()))
-    tray.applyRequested.connect(window.apply_now)
-    tray.dryRunRequested.connect(window.dry_run)
-    tray.revertRequested.connect(window.revert)
-    tray.quitRequested.connect(app.quit)
-
-    def on_state(run):
-        if run is None:
-            tray.set_state(tray_mod.STATE_ATTENTION, "Could not reach steamtrain.")
-            return
-        if run.blocked:
-            tray.set_state(tray_mod.STATE_BLOCKED, run.message)
-            tray.set_actions_enabled(False, "Steam is running")
-            return
-        if not run.ok:
-            tray.set_state(tray_mod.STATE_ATTENTION, run.message)
-            tray.set_actions_enabled(True)
-            return
-        tray.set_state(tray_mod.STATE_HEALTHY)
-        tray.set_actions_enabled(True)
-        written = (run.result or {}).get("written", 0)
-        if written and notifications_enabled():
-            tray.notify_changes(written)
-
-    window.stateRefreshed.connect(on_state)

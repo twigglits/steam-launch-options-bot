@@ -46,7 +46,6 @@ pub fn default_config() -> Map<String, Value> {
     );
     map.insert("enable_mesa_glthread".to_string(), Value::from(true));
     map.insert("enable_proton_wayland".to_string(), Value::from(false));
-    map.insert("advisor_command".to_string(), Value::from("claude -p"));
     map.insert("overrides".to_string(), Value::Object(Map::new()));
     map.insert("exclude".to_string(), Value::Array(Vec::new()));
     map
@@ -136,14 +135,6 @@ impl Config {
 
     pub fn flag(&self, key: &str) -> bool {
         self.data.get(key).is_some_and(truthy)
-    }
-
-    pub fn advisor_command(&self) -> String {
-        self.data
-            .get("advisor_command")
-            .and_then(Value::as_str)
-            .unwrap_or("claude -p")
-            .to_string()
     }
 
     pub fn override_for(&self, appid: &str) -> Option<&str> {
@@ -323,7 +314,6 @@ mod tests {
                 "enable_shader_cache_skip_cleanup",
                 "enable_mesa_glthread",
                 "enable_proton_wayland",
-                "advisor_command",
                 "overrides",
                 "exclude",
             ]

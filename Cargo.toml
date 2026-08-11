@@ -19,9 +19,6 @@ serde = { version = "1", features = ["derive"] }
 # the keys a user put there.
 serde_json = { version = "1", features = ["preserve_order"] }
 shlex = "1"
-# rustls rather than a system TLS library, so the package gains no libssl
-# dependency. Used only by the on-demand advisor.
-ureq = { version = "3", default-features = false, features = ["rustls"] }
 
 [dev-dependencies]
 tempfile = "3"
