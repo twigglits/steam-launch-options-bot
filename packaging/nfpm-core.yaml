@@ -1,9 +1,12 @@
 # Core package: CLI, rule engine, systemd user units.
 #
-# One config, every format and every architecture. Two variables drive it:
+# One config, every format. One variable drives it:
 #
 #   STEAMTRAIN_VERSION  the version being built
-#   STEAMTRAIN_ARCH     the package architecture (amd64, arm64)
+#
+# The architecture is fixed at amd64 — Steam's Linux client is x86_64 only, so
+# a build for anything else ships a tool with no Steam to configure. nfpm
+# renders that as `_amd64.deb` and `.x86_64.rpm` per family.
 #
 # The binary is read from a fixed staging path rather than from
 # target/<triple>/release, because nfpm does not expand environment variables
@@ -20,10 +23,9 @@
 #   cargo build --release --target x86_64-unknown-linux-musl
 #   install -Dm755 target/x86_64-unknown-linux-musl/release/steamtrain \
 #     dist/stage/steamtrain
-#   STEAMTRAIN_VERSION=0.5.0 STEAMTRAIN_ARCH=amd64 \
-#     nfpm package -f packaging/nfpm-core.yaml -p deb -t dist/
+#   STEAMTRAIN_VERSION=0.5.0 nfpm package -f packaging/nfpm-core.yaml -p deb -t dist/
 name: steamtrain
-arch: ${STEAMTRAIN_ARCH}
+arch: amd64
 platform: linux
 version: ${STEAMTRAIN_VERSION}
 section: games

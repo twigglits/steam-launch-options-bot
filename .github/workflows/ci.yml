@@ -63,23 +63,17 @@ jobs:
           STEAMTRAIN_BIN: ${{ github.workspace }}/target/debug/steamtrain
         run: python3 -m unittest discover -s tests -v
 
+  # Steam's Linux client is x86_64 only, so this is the only target worth
+  # packaging: an arm64 build would ship a tool with no Steam to configure.
   packaging:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            runs-on: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-          - arch: arm64
-            runs-on: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-musl
-    runs-on: ${{ matrix.runs-on }}
+    runs-on: ubuntu-latest
+    env:
+      TARGET: x86_64-unknown-linux-musl
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: x86_64-unknown-linux-musl
       - uses: Swatinem/rust-cache@v2
       # musl-tools for the target C toolchain. Native, on a runner of the same
       # architecture, so there is no cross-compilation here and no need for
@@ -89,11 +83,11 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq musl-tools
       - name: Build the static binary
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target "$TARGET"
       - name: The shipped binary must need no interpreter or shared libraries
         run: |
           set -eu
-          binary=target/${{ matrix.target }}/release/steamtrain
+          binary="target/$TARGET/release/steamtrain"
           file "$binary"
           # Either spelling is a fully static binary with no interpreter and
           # no shared libraries. The Core links no C code any more, so the musl
@@ -103,45 +97,36 @@ jobs:
             || { echo "not statically linked"; exit 1; }
       - name: Install nfpm
         run: |
-          case "${{ matrix.arch }}" in
-            amd64) asset="nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz" ;;
-            arm64) asset="nfpm_${NFPM_VERSION}_Linux_arm64.tar.gz" ;;
-          esac
-          curl -sL "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/${asset}" \
+          curl -sL "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz" \
             | tar xz -C /usr/local/bin nfpm
         env:
           NFPM_VERSION: 2.47.0
       - name: Validate desktop entry
-        if: matrix.arch == 'amd64'
         run: |
           sudo apt-get install -y -qq desktop-file-utils
           desktop-file-validate packaging/steamtrain.desktop
-      - name: Build the package matrix
+      - name: Build the packages
         run: |
           set -eu
           mkdir -p dist/stage
           STEAMTRAIN_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
           export STEAMTRAIN_VERSION
-          export STEAMTRAIN_ARCH="${{ matrix.arch }}"
           # nfpm does not expand environment variables inside contents.src, so
           # the binary is staged at the fixed path the config names.
-          install -Dm755 "target/${{ matrix.target }}/release/steamtrain" dist/stage/steamtrain
+          install -Dm755 "target/$TARGET/release/steamtrain" dist/stage/steamtrain
           for format in deb rpm; do
             nfpm package -f packaging/nfpm-core.yaml -p "$format" -t dist/
           done
-          # The GUI package is pure Python and arch-independent, so it is built
-          # once rather than once per architecture.
-          if [ "${{ matrix.arch }}" = "amd64" ] && [ -d steamtrain_gui ]; then
+          if [ -d steamtrain_gui ]; then
             for format in deb rpm; do
               nfpm package -f packaging/nfpm-gui.yaml -p "$format" -t dist/
             done
-          elif [ ! -d steamtrain_gui ]; then
+          else
             echo "::warning::steamtrain_gui/ is absent - the GUI package was NOT built or verified in this run"
           fi
           rm -rf dist/stage
           ls -l dist/
       - name: The Core package must declare no dependencies
-        if: matrix.arch == 'amd64'
         run: |
           set -eu
           depends=$(dpkg-deb -f dist/steamtrain_*_amd64.deb Depends || true)
@@ -151,7 +136,7 @@ jobs:
           echo "Core package depends on nothing"
       - uses: actions/upload-artifact@v4
         with:
-          name: packages-${{ matrix.arch }}
+          name: packages
           path: dist/
 
   install-smoke:
@@ -174,7 +159,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v4
         with:
-          name: packages-amd64
+          name: packages
           path: dist
       - name: Install, verify inert, run, remove
         run: |
