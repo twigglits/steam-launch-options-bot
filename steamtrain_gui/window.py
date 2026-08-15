@@ -1,20 +1,27 @@
-"""The settings window: the only surface steamtrain has.
+"""The settings window: the only surface steamtrain has, and the only thing
+that can run it.
 
-There is no tray icon and no background presence: when this window is closed,
-the only thing that can still act is the systemd timer, and whether that is
-running is stated at the top of the window rather than left to be discovered.
+There is no tray icon and no background presence. Scheduled runs are a timer
+inside this process, so "is steamtrain running?" has one answer a person can
+check without a terminal: the window is open, or it is not. Close it and
+nothing of steamtrain is left running.
 """
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import (
-    QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QFrame, QGroupBox,
-    QHBoxLayout, QHeaderView, QLabel, QMainWindow, QMessageBox, QProgressBar,
-    QPushButton, QRadioButton, QTableView, QVBoxLayout, QWidget,
+    QDialog, QDialogButtonBox, QFormLayout, QFrame, QGroupBox, QHBoxLayout,
+    QHeaderView, QLabel, QMainWindow, QMessageBox, QProgressBar, QPushButton,
+    QRadioButton, QTableView, QVBoxLayout, QWidget,
 )
 
-from . import client, models, system
+from . import client, models
 from .qtclient import CoreRunner
+
+# Half an hour, the interval the systemd timer this replaces used: long enough
+# that a scheduled run costs nothing noticeable, short enough to catch a game
+# installed while you were playing another one.
+SCHEDULE_INTERVAL_MS = 30 * 60 * 1000
 
 VENDOR_LABELS = [
     ("auto", "Detect automatically"),
@@ -186,19 +193,20 @@ class MainWindow(QMainWindow):
         self.runner.record.connect(self._on_record)
         self.runner.busyChanged.connect(self._on_busy_changed)
 
+        # Scheduled runs are this timer and nothing else, and it runs for as
+        # long as the window does. There is no switch because opening the
+        # window is the switch: one fact, visible on screen, with no stored
+        # preference that could disagree with it.
+        self.schedule = QTimer(self)
+        self.schedule.setInterval(SCHEDULE_INTERVAL_MS)
+        self.schedule.timeout.connect(self._scheduled_run)
+        self.schedule.start()
+
         self._build()
+        self._update_schedule_row()
         # Deferred rather than called here: starting a worker before the event
         # loop exists races with teardown if the process never reaches exec().
         QTimer.singleShot(0, self.refresh)
-
-        # The timer can be switched on or off from outside this window
-        # (systemctl, another session), so the row is re-read on a clock rather
-        # than only after a Core run. Cheap: one `systemctl show`.
-        self._timer_poll = QTimer(self)
-        self._timer_poll.setInterval(5000)
-        self._timer_poll.timeout.connect(self._refresh_timer_row)
-        self._timer_poll.start()
-        self._refresh_timer_row()
 
     # ---------------------------------------------------------------- build
 
@@ -243,19 +251,13 @@ class MainWindow(QMainWindow):
         box = QGroupBox("Status")
         form = QFormLayout(box)
 
-        row = QHBoxLayout()
-        self.timer_checkbox = QCheckBox("Run automatically")
-        self.timer_checkbox.setToolTip(
-            "Every 30 minutes, apply options to any newly installed game. "
-            "Off by default: nothing runs on a schedule unless you tick this.")
-        self.timer_checkbox.toggled.connect(self._on_timer_toggled)
-        self.timer_detail = QLabel("")
-        self.timer_detail.setWordWrap(True)
-        row.addWidget(self.timer_checkbox)
-        row.addWidget(self.timer_detail, stretch=1)
-        holder = QWidget()
-        holder.setLayout(row)
-        form.addRow("Scheduled runs:", holder)
+        self.schedule_label = QLabel("")
+        self.schedule_label.setWordWrap(True)
+        self.schedule_label.setToolTip(
+            "Newly installed games get their launch options every 30 minutes "
+            "while this window is open. Close it and nothing of steamtrain "
+            "runs.")
+        form.addRow("Scheduled runs:", self.schedule_label)
 
         self.steam_label = QLabel("—")
         form.addRow("Steam:", self.steam_label)
@@ -398,8 +400,6 @@ class MainWindow(QMainWindow):
         if "steam_running" in result:
             self._set_steam_running(bool(result["steam_running"]))
 
-        self._refresh_timer_row()
-
     def _on_run_failed(self, message):
         self.banner.show_message(message, "error")
 
@@ -426,32 +426,33 @@ class MainWindow(QMainWindow):
             self.revert_button.setEnabled(True)
             self.apply_button.setToolTip("Write the proposed launch options.")
 
-    # ---------------------------------------------------------------- timer
+    # ------------------------------------------------------------- scheduling
 
-    def _refresh_timer_row(self):
-        state = system.timer_state()
-        self.timer_checkbox.blockSignals(True)
-        self.timer_checkbox.setChecked(state.running)
-        self.timer_checkbox.blockSignals(False)
-        self.timer_checkbox.setEnabled(state.controllable and not self._degraded)
-        self.timer_detail.setText(state.describe())
-        # Read by a screen reader as one statement; the checkbox alone would
-        # say "checked" without saying when anything actually happens.
-        self.timer_detail.setAccessibleName(f"Scheduled runs: {state.describe()}")
+    def _update_schedule_row(self):
+        # Says what is happening, not what was configured: this row is read
+        # back from the timer, so it cannot claim a run that is not coming.
+        text = ("every 30 minutes, for as long as this window stays open"
+                if self.schedule.isActive() else
+                "stopped — press Apply when you want a run")
+        self.schedule_label.setText(text)
+        self.schedule_label.setAccessibleName(f"Scheduled runs: {text}")
 
-    def _on_timer_toggled(self, checked):
-        ok, message = system.set_timer(checked)
-        if not ok:
-            self.banner.show_message(
-                f"Could not {'enable' if checked else 'disable'} the scheduled "
-                f"run: {message}", "error")
-        # Re-read rather than trusting the request: the switch must show what
-        # systemd actually did.
-        self._refresh_timer_row()
+    def _scheduled_run(self):
+        """Apply, unless the user is already driving the Core by hand.
+
+        Skipped rather than queued: the next tick is half an hour away and
+        applying twice would only repeat work that is idempotent anyway.
+        """
+        if self.runner.busy or self._degraded:
+            return
+        self.apply_now()
 
     # ------------------------------------------------------------- degraded
 
     def closeEvent(self, event):
+        # Closing is the off switch for scheduled runs, so stop the timer here
+        # rather than relying on teardown order.
+        self.schedule.stop()
         self.runner.wait()
         super().closeEvent(event)
 
@@ -462,4 +463,5 @@ class MainWindow(QMainWindow):
         for button in (self.dry_run_button, self.apply_button,
                        self.revert_button, self.refresh_button):
             button.setEnabled(False)
-        self.timer_checkbox.setEnabled(False)
+        self.schedule.stop()
+        self._update_schedule_row()

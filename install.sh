@@ -1,10 +1,9 @@
 #!/bin/sh
-# Install steamtrain for the current user: binary, systemd user units.
+# Install steamtrain for the current user: one binary, nothing scheduled.
 set -eu
 
 REPO_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 BIN_DIR="$HOME/.local/bin"
-UNIT_DIR="$HOME/.config/systemd/user"
 
 usage() {
     echo "usage: $0 [--migrate]"
@@ -71,45 +70,27 @@ require_cargo "./install.sh"
 
 build
 
-mkdir -p "$BIN_DIR" "$UNIT_DIR"
+mkdir -p "$BIN_DIR"
 install -m 0755 "$REPO_DIR/target/release/steamtrain" "$BIN_DIR/steamtrain"
 
-# systemd user session is optional: install the timer when available, else warn.
-# Any systemd step may still fail (no lingering session, masked unit); degrade
-# instead of aborting a half-finished install under `set -eu`.
-#
-# The unit is written but deliberately NOT enabled. An installer that schedules
-# writes to your Steam configuration without being asked is exactly the hidden
-# state this tool must not have: after this script, nothing runs until you say
-# so, either here or in the settings window.
-systemd_ok=0
-if command -v systemctl >/dev/null 2>&1 && systemctl --user daemon-reload 2>/dev/null; then
-    # The shipped unit targets /usr/bin, which is where a distribution package
-    # puts the binary. This install puts it in ~/.local, so the ExecStart is
-    # rewritten on the way in rather than maintaining a second copy of the unit.
-    if sed 's,^ExecStart=/usr/bin/steamtrain ,ExecStart=%h/.local/bin/steamtrain ,' \
-           "$REPO_DIR/systemd/steamtrain.service" > "$UNIT_DIR/steamtrain.service" \
-        && cp "$REPO_DIR/systemd/steamtrain.timer" "$UNIT_DIR/" \
-        && systemctl --user daemon-reload 2>/dev/null; then
-        systemd_ok=1
-    fi
+# An earlier release of this script installed a systemd user timer. It is
+# removed rather than left behind: scheduled runs now belong to the settings
+# window and last only while it is open, and a stale timer would go on writing
+# with nothing of steamtrain on screen.
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user disable --now steamtrain.timer 2>/dev/null || true
 fi
-if [ "$systemd_ok" = 0 ]; then
-    echo "WARNING: systemd user timer not installed; there is no way to schedule" >&2
-    echo "         runs. The CLI still works - run 'steamtrain apply' yourself." >&2
-fi
+rm -f "$HOME/.config/systemd/user/steamtrain.service" \
+      "$HOME/.config/systemd/user/steamtrain.timer"
 
 echo "Installed. Nothing runs on a schedule; nothing has been written to Steam."
 echo "  steamtrain scan                                          # see proposals"
 echo "  steamtrain apply --dry-run                               # plan without writing"
 echo "  steamtrain apply                                         # write them"
-if [ "$systemd_ok" = 1 ]; then
-    echo
-    echo "To have it run every 30 minutes for newly installed games:"
-    echo "  systemctl --user enable --now steamtrain.timer         # opt in"
-    echo "  systemctl --user list-timers steamtrain.timer          # confirm it is on"
-    echo "  systemctl --user disable --now steamtrain.timer        # opt back out"
-fi
+echo
+echo "To have it run every 30 minutes for newly installed games, open the"
+echo "settings window (steamtrain-gui) and leave it open. It runs for as long"
+echo "as that window is open, and stops when you close it."
 
 # Hardware setup wizard: only with an interactive terminal on both ends.
 if [ -t 0 ] && [ -t 1 ]; then

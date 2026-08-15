@@ -1,9 +1,10 @@
 //! System profile detection: OS, desktop environment, GPU, CPU, helper tools.
 //!
 //! Every impure input is injectable, so the whole module is testable without a
-//! desktop session. That matters in production too, not only in tests: this
-//! runs under a systemd user timer, where there is no session to inherit
-//! variables from, and the wayland socket in XDG_RUNTIME_DIR is the fallback.
+//! desktop session. That matters in production too, not only in tests: the CLI
+//! is also run from cron, ssh and a user's own systemd unit, where there is no
+//! session to inherit variables from, and the wayland socket in
+//! XDG_RUNTIME_DIR is the fallback.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -374,7 +375,7 @@ mod tests {
 
     #[test]
     fn the_runtime_dir_is_derived_from_the_uid_when_unset() {
-        // Under a systemd user timer there may be no XDG_RUNTIME_DIR to
+        // Run from cron or a user unit there may be no XDG_RUNTIME_DIR to
         // inherit, so the uid comes from /proc rather than a libc call.
         let mut files: Vec<(&str, &str)> = AMD_FILES.to_vec();
         files.push((

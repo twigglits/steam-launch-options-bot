@@ -23,14 +23,15 @@ homepage: https://github.com/twigglits/steamtrain
 license: GPL-3.0-or-later
 description: |
   Desktop interface for steamtrain.
-  Confirms what steamtrain detected about your machine, says whether the
-  scheduled timer is actually running and lets you switch it on or off, shows
-  whether Steam is currently blocking a write, and lists the launch options
-  proposed for each installed game before anything is written.
+  Confirms what steamtrain detected about your machine, shows whether Steam is
+  currently blocking a write, lists the launch options proposed for each
+  installed game before anything is written, and repeats that every 30 minutes
+  for newly installed games.
   .
-  One window and nothing else: no tray icon, no background process. Closing it
-  quits. The systemd timer is the only thing that can run without it, and the
-  window says so.
+  One window and nothing else: no tray icon, no background process, no systemd
+  timer, and no switch to leave in the wrong position. Scheduled runs happen
+  while this window is open and stop when you close it, so steamtrain is
+  running exactly when you can see that it is.
 
 # The exact-version pin matters: the GUI speaks a versioned wire protocol to
 # the Core, so a mismatched pair must fail at install time rather than at

@@ -9,15 +9,14 @@
   <img src="assets/mascot.svg" width="760" height="380" alt="Project mascot: a little steam locomotive whose boiler carries a brass steam gate-valve with a spoked handwheel, steam puffing from the smokestack and hissing from the valve as the driving wheels turn — a visual pun on Steam launch options.">
 </p>
 
-A systemd (user) service for Linux that scans your installed Steam games (only
-game folders that actually exist on disk) and sets launch options appropriate
-for **your** OS, desktop environment, and hardware.
+A Linux tool that scans your installed Steam games (only game folders that
+actually exist on disk) and sets launch options appropriate for **your** OS,
+desktop environment, and hardware.
 
 Works across Ubuntu/Debian, Arch, and Fedora (and their derivatives) — anything
-with a Linux kernel and, for automatic scheduling, a systemd user session.
-Without a systemd user session the CLI still works; you just run
-`steamtrain apply` yourself. A single statically linked binary with **no runtime
-dependencies at all**. Fully offline.
+with a Linux kernel. A single statically linked binary with **no runtime
+dependencies at all**, plus an optional settings window. Fully offline, and it
+only ever runs when you run it or while that window is open.
 
 ## Why not just copy options from ProtonDB?
 
@@ -43,16 +42,18 @@ known to break games (e.g. it never forces `SDL_VIDEODRIVER=wayland`).
 
 ## Safety guarantees
 
-- **Nothing runs on a schedule unless you switch it on.** No install path —
-  package, `install.sh`, or the desktop interface — enables the timer for you.
-  Until you opt in, steamtrain only ever runs when you run it, and the settings
-  window states whether the timer is actually running at the top of the window.
+- **Nothing runs unless steamtrain is open.** Scheduled runs live in the
+  settings window: while it is open, options are applied every 30 minutes for
+  newly installed games; close the window and steamtrain is not running, full
+  stop. There is no switch to get that wrong, no background service, no tray
+  icon and no systemd timer — "is it running?" is answered by looking at your
+  screen.
 - **Never overwrites options a human set.** It only writes when the current
   value is empty or byte-identical to what it wrote previously (tracked in
   `~/.local/state/steamtrain/state.json`). Your manual tweaks
   always win.
 - **Never writes while Steam is running** (Steam would silently discard the
-  change on exit). The timer just retries later.
+  change on exit). A scheduled run just retries half an hour later.
 - **Backs up** `localconfig.vdf` before every write (last 10 kept in the
   state dir) and replaces it atomically, preserving permissions.
 - **Only touches games that exist on disk**: a game counts as installed only
@@ -85,14 +86,9 @@ runtime dependency to satisfy. On Arch and other distributions without a
 package, install from source (below).
 
 **Installing a package does nothing on its own.** It writes no files into your
-home directory and schedules nothing. Turn the timer on yourself, either in the
-settings window or with:
-
-```sh
-systemctl --user enable --now steamtrain.timer
-```
-
-Restart Steam to see applied options take effect in the UI.
+home directory, installs no service or timer, and schedules nothing. Open the
+settings window and press **Apply now**, or run `steamtrain apply`. Restart
+Steam to see applied options take effect in the UI.
 
 > Ubuntu 22.04 can install the CLI package but not `steamtrain-gui`: jammy has
 > no `python3-pyqt6`.
@@ -100,9 +96,10 @@ Restart Steam to see applied options take effect in the UI.
 ### Already installed with `install.sh`?
 
 An older `~/.local` install **silently wins** over a packaged one — `~/.local/bin`
-comes before `/usr/bin` in `PATH`, and a user unit overrides the packaged one — so
-the package you just installed would not actually be the code running. steamtrain
-detects this and tells you. To clear it out:
+comes before `/usr/bin` in `PATH` — so the package you just installed would not
+actually be the code running, and any systemd units that install left behind
+would go on running the old binary. steamtrain detects this and tells you. To
+clear it out:
 
 ```sh
 steamtrain doctor          # report what is conflicting
@@ -118,11 +115,11 @@ are removed.
 ./install.sh
 ```
 
-This builds with `cargo build --release`, installs the binary to
-`~/.local/bin/steamtrain`, and writes the systemd **user** units without
-enabling them. Like the packages, it schedules nothing: run `steamtrain apply`
-yourself, or opt in to the timer (see below). Restart Steam to see applied
-options take effect in the UI.
+This builds with `cargo build --release` and installs one binary to
+`~/.local/bin/steamtrain`. Like the packages it schedules nothing: run
+`steamtrain apply` yourself, or open the settings window (see below). Restart
+Steam to see applied options take effect in the UI. If an earlier release of
+this script left systemd user units behind, they are removed.
 
 Building from source needs a Rust toolchain. If you would rather not install
 one, every release also ships a prebuilt binary tarball alongside the
@@ -132,34 +129,40 @@ distribution packages.
 without installing anything, for switching to a distribution package.
 
 The installer checks for `cargo` first (printing a per-distro install hint if
-it is missing — `pacman`/`dnf`/`apt`, never run for you). If there is no
-systemd user session it warns and skips the units, leaving a working CLI. When
-run in a terminal it finishes by launching the hardware setup wizard (below);
+it is missing — `pacman`/`dnf`/`apt`, never run for you). When run in a
+terminal it finishes by launching the hardware setup wizard (below);
 piped/non-interactive installs skip it and print a reminder to run
 `steamtrain setup`.
 
-### Scheduling (opt-in)
+### Scheduling: the window is the switch
 
-Nothing runs on its own until you say so. Turn it on with the **Run
-automatically** switch in the settings window, or:
+Open the settings window (`steamtrain-gui`, or *steamtrain* in your application
+menu) and it applies options every 30 minutes for newly installed games, saying
+so in the **Scheduled runs** row. Close the window and that stops — there is
+nothing left behind to run.
+
+There is deliberately no checkbox. steamtrain writes to your Steam
+configuration, and a tool that does that should not be able to run at a moment
+when nothing of it is visible; a switch would be a second answer to "is it
+running?", and the kind that can be on while nothing happens. Open means
+running, closed means not.
+
+If you *want* runs without the window — a headless box, a machine you rarely
+log into — schedule the CLI yourself. It is one line of crontab:
 
 ```sh
-systemctl --user enable --now steamtrain.timer   # 2 min after boot, then every 30 min
-systemctl --user list-timers steamtrain.timer    # confirm it is really running
-systemctl --user disable --now steamtrain.timer  # stop it
-journalctl --user -u steamtrain.service -e       # what it did
+*/30 * * * * /usr/bin/steamtrain apply
 ```
 
-The settings window reads the same state back from systemd rather than
-remembering what it asked for, so a timer that was enabled but never started —
-ticked box, no run — is reported as exactly that.
+That is your unit and your decision, which is the point: steamtrain does not
+install one for you.
 
 ### Supported distributions
 
 Ubuntu/Debian, Arch, and Fedora and their derivatives are all supported. The
 packaged binary is statically linked against musl, so it carries no glibc
 version requirement and runs the same on all of them; installing from source
-needs only a Rust toolchain and a systemd user session for the timer.
+needs only a Rust toolchain.
 
 ```sh
 ./uninstall.sh        # run `steamtrain revert` first if you want options cleared
@@ -231,13 +234,18 @@ the menu treats end-of-input as Skip.
   generated baseline. This is where ProtonDB-sourced, hardware-vetted tips go.
 - `exclude` — appids the tool must never touch.
 
-## Running as a root system service instead
+## Running it from a unit of your own
 
-A user unit is the right default (all Steam data is user-owned), but a
-system-level variant works too — create
-`/etc/systemd/system/steamtrain.service` with `User=<you>` and
-`Environment=HOME=/home/<you>`, plus a matching timer, and point `ExecStart`
-at `/home/<you>/.local/bin/steamtrain apply`.
+steamtrain ships no units, but the CLI is an ordinary one-shot program, so
+writing one is easy if you want runs without the window. A **user** unit is the
+right shape (all Steam data is user-owned): `ExecStart=%h/.local/bin/steamtrain
+apply`, `Type=oneshot`, plus a `.timer` with `OnCalendar=*:0/30` and
+`Persistent=true`. Use a calendar rather than a monotonic timer: a monotonic
+pair enabled long after boot has both elapse points in the past and lands
+straight in `active (elapsed)` — switched on, never firing.
+
+A system-level variant works too: `/etc/systemd/system/steamtrain.service` with
+`User=<you>` and `Environment=HOME=/home/<you>`.
 
 ## Development
 

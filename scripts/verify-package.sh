@@ -19,13 +19,16 @@ sh -c "$install_cmd"
 
 echo "--- FR-5: layout"
 test -x /usr/bin/steamtrain || { echo "FAIL: /usr/bin/steamtrain missing"; exit 1; }
-test -f /usr/lib/systemd/user/steamtrain.timer || { echo "FAIL: user timer missing"; exit 1; }
-grep -q '^ExecStart=/usr/bin/steamtrain apply$' /usr/lib/systemd/user/steamtrain.service \
-  || { echo "FAIL: unit does not target /usr/bin"; exit 1; }
+
+echo "--- nothing can run without the settings window"
+# Scheduled runs live in the GUI process and end with it. A unit file shipped
+# here would be a second, invisible way for steamtrain to write to Steam.
+test ! -e /usr/lib/systemd/user/steamtrain.timer \
+  || { echo "FAIL: package ships a systemd timer"; exit 1; }
+test ! -e /usr/lib/systemd/user/steamtrain.service \
+  || { echo "FAIL: package ships a systemd service"; exit 1; }
 
 echo "--- FR-6 / AD-9: installing mutates nothing a user owns"
-test ! -e /etc/systemd/user/timers.target.wants/steamtrain.timer \
-  || { echo "FAIL: timer was globally enabled"; exit 1; }
 useradd -m tester
 if find /home/tester -name '*steamtrain*' -print -quit | grep -q .; then
     echo "FAIL: install wrote into a fresh HOME"; exit 1

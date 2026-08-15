@@ -101,8 +101,8 @@ fn apply_keeps_a_value_a_human_set() {
 
 #[test]
 fn a_blocked_run_exits_zero_and_reports_blocked() {
-    // Steam being open is the expected case, not a failure: the timer must not
-    // record one for it.
+    // Steam being open is the expected case, not a failure: a scheduled run
+    // must not record one for it.
     let fixture = Fixture::new();
     let mut cli = Cli::new("amd");
     cli.steam_running = true;

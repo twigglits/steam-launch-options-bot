@@ -227,7 +227,7 @@ fn doctor_is_quiet_on_a_developer_checkout() {
 #[test]
 fn a_stale_pid_file_does_not_block_a_write() {
     // is_steam_running trusts /proc/<pid>/comm, not the pid file alone, so a
-    // leftover steam.pid from a crashed client must not stop the timer
+    // leftover steam.pid from a crashed client must not block writes
     // forever. The blocked-run path itself is covered in tests/cli_apply.rs,
     // which can force the guardrail.
     let fixture = Fixture::new();
