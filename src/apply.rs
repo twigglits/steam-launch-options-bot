@@ -36,7 +36,7 @@ pub fn default_state_dir() -> PathBuf {
 
 #[derive(Debug)]
 pub enum ApplyError {
-    /// The guardrail, not a failure: exits 0 and the timer retries later.
+    /// The guardrail, not a failure: exits 0 and a scheduled run retries later.
     SteamRunning(String),
     Io(String),
     Vdf(String),
@@ -338,7 +338,7 @@ pub fn apply_changes(
     if is_running(root) {
         return Err(ApplyError::SteamRunning(
             "Steam is running; localconfig.vdf would be overwritten on Steam \
-             exit. Close Steam and re-run (the timer retries automatically)."
+             exit. Close Steam and re-run (a scheduled run retries by itself)."
                 .to_string(),
         ));
     }

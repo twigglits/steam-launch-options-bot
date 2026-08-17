@@ -1,7 +1,7 @@
 """Talk to the steamtrain CLI. The only place in the GUI that spawns it.
 
 The GUI is a client process of the CLI, never a library consumer: it never
-imports the Core. That is what makes "the window and the systemd timer do the
+imports the Core. That is what makes "the window and the command line do the
 same thing" true by construction instead of by discipline, and it keeps the
 Core's internals private with no stability contract to honour.
 

@@ -13,7 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from tests.qtapp import HAVE_QT, ensure_app
 
 if HAVE_QT:
-    from steamtrain_gui import client, models, system, window
+    from steamtrain_gui import client, models, window
 
 
 def setUpModule():
@@ -171,7 +171,7 @@ class WindowTest(unittest.TestCase):
         for button in (win.apply_button, win.revert_button,
                        win.dry_run_button, win.refresh_button):
             self.assertFalse(button.isEnabled())
-        self.assertFalse(win.timer_checkbox.isEnabled())
+        self.assertFalse(win.schedule.isActive())
 
     def test_progress_records_drive_the_progress_bar(self):
         win = self.make()
@@ -185,54 +185,60 @@ class WindowTest(unittest.TestCase):
 
 
 @unittest.skipUnless(HAVE_QT, "PyQt6 not installed")
-class SchedulingRowTest(unittest.TestCase):
-    """The window must never claim a timer is running when it is not."""
+class SchedulingTest(unittest.TestCase):
+    """Scheduled runs exist while this window does, and there is no switch.
 
-    def make(self, state):
+    Opening the window is the switch, so the tests assert the timer itself:
+    there is no stored preference that could disagree with it, and the row
+    reads its words back from the timer rather than from an intention.
+    """
+
+    def make(self):
         win = window.MainWindow("0.5.0", "0.5.0")
         self.addCleanup(win.runner.wait)
         self.addCleanup(win.deleteLater)
-        original = system.timer_state
-        system.timer_state = lambda: state
-        self.addCleanup(lambda: setattr(system, "timer_state", original))
-        win._refresh_timer_row()
         return win
 
-    def state(self, **kwargs):
-        fields = dict(session=True, installed=True, enabled=False,
-                      active=False, next_run=None, spent=False)
-        fields.update(kwargs)
-        return system.TimerState(**fields)
+    def test_an_open_window_is_already_scheduling(self):
+        win = self.make()
+        self.assertTrue(win.schedule.isActive())
+        self.assertEqual(30 * 60 * 1000, win.schedule.interval())
 
-    def test_running_timer_is_ticked_and_names_the_next_run(self):
-        win = self.make(self.state(enabled=True, active=True,
-                                   next_run="Fri 2026-07-24 16:30:00 SAST"))
-        self.assertTrue(win.timer_checkbox.isChecked())
-        self.assertIn("16:30", win.timer_detail.text())
+    def test_the_row_says_it_needs_the_window_open(self):
+        win = self.make()
+        self.assertIn("this window", win.schedule_label.text())
 
-    def test_enabled_but_inactive_is_not_shown_as_running(self):
-        """The state that would otherwise be a silent lie: ticked, never fires."""
-        win = self.make(self.state(enabled=True, active=False))
-        self.assertFalse(win.timer_checkbox.isChecked())
-        self.assertIn("not counting down", win.timer_detail.text())
+    def test_nothing_offers_to_switch_scheduling_off(self):
+        """A checkbox here would be a second answer to "is it running?"."""
+        from PyQt6.QtWidgets import QCheckBox
+        win = self.make()
+        self.assertEqual([], win.findChildren(QCheckBox))
 
-    def test_elapsed_timer_is_not_dressed_up_as_a_working_one(self):
-        win = self.make(self.state(enabled=True, active=True, spent=True))
-        self.assertIn("no further run is scheduled", win.timer_detail.text())
+    def test_closing_the_window_ends_scheduled_runs(self):
+        win = self.make()
+        win.close()
+        self.assertFalse(win.schedule.isActive())
 
-    def test_off_says_nothing_runs_on_its_own(self):
-        win = self.make(self.state())
-        self.assertFalse(win.timer_checkbox.isChecked())
-        self.assertIn("nothing runs on its own", win.timer_detail.text())
+    def test_a_tick_while_busy_is_skipped_rather_than_queued(self):
+        win = self.make()
+        started = []
+        win._start = lambda *args: started.append(args)
+        win.runner._busy = True   # as if a hand-driven run were in flight
+        win._scheduled_run()
+        self.assertEqual([], started)
 
-    def test_missing_unit_disables_the_switch_rather_than_failing_on_click(self):
-        win = self.make(self.state(installed=False))
-        self.assertFalse(win.timer_checkbox.isEnabled())
-        self.assertIn("not installed", win.timer_detail.text())
+    def test_a_tick_applies(self):
+        win = self.make()
+        started = []
+        win._start = lambda *args: started.append(args)
+        win._scheduled_run()
+        self.assertEqual([(["apply"], "Writing launch options…")], started)
 
-    def test_no_user_session_disables_the_switch(self):
-        win = self.make(self.state(session=False, installed=False))
-        self.assertFalse(win.timer_checkbox.isEnabled())
+    def test_degraded_mode_stops_scheduling_and_says_so(self):
+        win = self.make()
+        win.set_degraded("An old install is still in the way.")
+        self.assertFalse(win.schedule.isActive())
+        self.assertIn("stopped", win.schedule_label.text())
 
 
 @unittest.skipUnless(HAVE_QT, "PyQt6 not installed")

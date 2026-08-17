@@ -1,9 +1,28 @@
-"""Per-user timer control. Qt-free, headless."""
+"""Cleanup of the timer older releases installed. Qt-free, headless."""
 
 import subprocess
 import unittest
 
 from steamtrain_gui import system
+
+try:
+    from steamtrain_gui import app
+    HAVE_QT = True
+except ImportError:  # the GUI package is optional
+    HAVE_QT = False
+
+
+class FakeSettings:
+    """Stands in for QSettings: the same two calls, none of the Qt."""
+
+    def __init__(self, **values):
+        self.values = values
+
+    def value(self, key, default=None, type=None):
+        return self.values.get(key, default)
+
+    def setValue(self, key, value):
+        self.values[key] = value
 
 
 class Fake:
@@ -13,137 +32,61 @@ class Fake:
         self.stderr = stderr
 
 
-SHOW_ENABLED = (
-    "LoadState=loaded\n"
-    "UnitFileState=enabled\n"
-    "ActiveState=active\n"
-    "SubState=waiting\n"
-    "NextElapseUSecRealtime=Fri 2026-07-24 16:30:00 SAST\n"
-)
-SHOW_DISABLED = (
-    "LoadState=loaded\n"
-    "UnitFileState=disabled\n"
-    "ActiveState=inactive\n"
-    "NextElapseUSecRealtime=n/a\n"
-)
-SHOW_ENABLED_NOT_STARTED = (
-    "LoadState=loaded\n"
-    "UnitFileState=enabled\n"
-    "ActiveState=inactive\n"
-    "NextElapseUSecRealtime=n/a\n"
-)
-SHOW_ABSENT = (
-    "LoadState=not-found\n"
-    "UnitFileState=\n"
-    "ActiveState=inactive\n"
-    "NextElapseUSecRealtime=\n"
-)
+class LegacyTimerTest(unittest.TestCase):
+    def test_switches_the_old_timer_off_for_this_user_only(self):
+        calls = []
 
+        def runner(argv, timeout=15):
+            calls.append(argv)
+            return Fake()
 
-class TimerStateTest(unittest.TestCase):
-    def test_enabled_timer_reports_its_next_run(self):
-        state = system.timer_state(runner=lambda argv, timeout=15: Fake(SHOW_ENABLED))
-        self.assertTrue(state.session)
-        self.assertTrue(state.enabled)
-        self.assertTrue(state.active)
-        self.assertTrue(state.running)
-        self.assertEqual("Fri 2026-07-24 16:30:00 SAST", state.next_run)
-        self.assertIn("Fri 2026-07-24 16:30:00 SAST", state.describe())
+        system.disable_legacy_timer(runner=runner)
+        self.assertEqual(
+            [["systemctl", "--user", "disable", "--now", "steamtrain.timer"]],
+            calls)
 
-    def test_disabled_timer_has_no_next_run(self):
-        state = system.timer_state(runner=lambda argv, timeout=15: Fake(SHOW_DISABLED))
-        self.assertTrue(state.session)
-        self.assertFalse(state.enabled)
-        self.assertFalse(state.running)
-        self.assertIsNone(state.next_run)
-        self.assertIn("nothing runs on its own", state.describe())
-
-    def test_enabled_but_never_started_is_not_running(self):
-        """Enabled is what happens next boot; it is not "a run is scheduled"."""
-        state = system.timer_state(
-            runner=lambda argv, timeout=15: Fake(SHOW_ENABLED_NOT_STARTED))
-        self.assertTrue(state.enabled)
-        self.assertFalse(state.active)
-        self.assertFalse(state.running)
-
-    def test_elapsed_timer_is_not_reported_as_a_scheduled_run(self):
-        """systemd's "active (elapsed)": switched on, will never fire again.
-
-        A monotonic-only timer enabled after boot lands here, and a tick box on
-        its own would call it healthy.
-        """
-        state = system.timer_state(runner=lambda argv, timeout=15: Fake(
-            "LoadState=loaded\nUnitFileState=enabled\nActiveState=active\n"
-            "SubState=elapsed\nNextElapseUSecRealtime=\n"))
-        self.assertTrue(state.spent)
-        self.assertIsNone(state.next_run)
-        self.assertIn("no further run is scheduled", state.describe())
-
-    def test_absent_unit_is_reported_apart_from_being_switched_off(self):
-        """A CLI-only install has no unit; the switch cannot turn it on."""
-        state = system.timer_state(runner=lambda argv, timeout=15: Fake(SHOW_ABSENT))
-        self.assertTrue(state.session)
-        self.assertFalse(state.installed)
-        self.assertFalse(state.controllable)
-        self.assertIn("not installed", state.describe())
-
-    def test_no_user_bus_is_a_normal_state_not_an_error(self):
-        """A container or a plain ssh session has no user bus; the CLI still works."""
-        state = system.timer_state(runner=lambda argv, timeout=15: Fake(
-            "", 1, "Failed to connect to bus: No such file or directory"))
-        self.assertFalse(state.session)
-        self.assertFalse(state.controllable)
-
-    def test_missing_systemctl_binary_degrades_rather_than_raising(self):
+    def test_absent_systemctl_is_not_an_error(self):
+        """No systemd here means no timer here: nothing to report."""
         def missing(argv, timeout=15):
             raise FileNotFoundError("systemctl")
-        state = system.timer_state(runner=missing)
-        self.assertFalse(state.session)
 
-    def test_systemctl_timeout_degrades_rather_than_raising(self):
+        system.disable_legacy_timer(runner=missing)
+
+    def test_a_hung_systemctl_does_not_hang_the_launch(self):
         def slow(argv, timeout=15):
-            raise subprocess.TimeoutExpired("systemctl", timeout)
-        state = system.timer_state(runner=slow)
-        self.assertFalse(state.session)
+            raise subprocess.TimeoutExpired(argv, timeout)
+
+        system.disable_legacy_timer(runner=slow)
+
+    def test_no_such_unit_is_not_an_error(self):
+        """The common case: a user who never had the timer in the first place."""
+        system.disable_legacy_timer(
+            runner=lambda argv, timeout=15: Fake(
+                "", 1, "Failed to disable: Unit file steamtrain.timer does not exist."))
 
 
-class SetTimerTest(unittest.TestCase):
-    def test_enable_uses_user_scope_and_starts_immediately(self):
-        seen = {}
+@unittest.skipUnless(HAVE_QT, "PyQt6 not installed")
+class LegacyTimerMigrationTest(unittest.TestCase):
+    """Once, ever — not at every launch."""
 
-        def runner(argv, timeout=15):
-            seen["argv"] = argv
-            return Fake()
+    def setUp(self):
+        self.calls = []
+        original = system.disable_legacy_timer
+        system.disable_legacy_timer = lambda: self.calls.append("disable")
+        self.addCleanup(
+            lambda: setattr(system, "disable_legacy_timer", original))
 
-        ok, _ = system.set_timer(True, runner=runner)
-        self.assertTrue(ok)
-        self.assertEqual(
-            ["systemctl", "--user", "enable", "--now", "steamtrain.timer"],
-            seen["argv"])
+    def test_first_launch_switches_the_old_timer_off(self):
+        settings = FakeSettings()
+        self.assertTrue(app.migrate_legacy_timer(settings))
+        self.assertEqual(["disable"], self.calls)
 
-    def test_disable_stops_it_too(self):
-        seen = {}
-
-        def runner(argv, timeout=15):
-            seen["argv"] = argv
-            return Fake()
-
-        system.set_timer(False, runner=runner)
-        self.assertIn("disable", seen["argv"])
-        self.assertIn("--now", seen["argv"])
-
-    def test_never_uses_global_scope(self):
-        """AD-9: enabling for every user on the machine is not ours to do."""
-        seen = {}
-        system.set_timer(True, runner=lambda argv, timeout=15: (
-            seen.update(argv=argv) or Fake()))
-        self.assertNotIn("--global", seen["argv"])
-
-    def test_failure_returns_the_reason_for_display(self):
-        ok, message = system.set_timer(True, runner=lambda argv, timeout=15: Fake(
-            "", 1, "Unit steamtrain.timer is masked."))
-        self.assertFalse(ok)
-        self.assertIn("masked", message)
+    def test_a_later_launch_leaves_a_timer_of_that_name_alone(self):
+        """It could be the user's own unit by then, and theirs is theirs."""
+        settings = FakeSettings()
+        app.migrate_legacy_timer(settings)
+        self.assertFalse(app.migrate_legacy_timer(settings))
+        self.assertEqual(["disable"], self.calls)
 
 
 if __name__ == "__main__":

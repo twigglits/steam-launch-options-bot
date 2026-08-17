@@ -8,8 +8,8 @@
    everywhere, and a CLI-only or headless user must not end up pulling in Qt.
 
 2. The GUI never imports the Core. It reaches it by executing the CLI, so that
-   "the window and the timer do the same thing" is true by construction rather
-   than by discipline. Checked against import syntax rather than the bare word,
+   "the window and the command line do the same thing" is true by construction
+   rather than by discipline. Checked against import syntax rather than the word,
    because the GUI's subprocess adapter necessarily contains the string
    "steamtrain" as an argument. With the Core in another language this is now
    also impossible by accident - which is a reason to keep checking it, not to
@@ -101,7 +101,7 @@ def check_gui():
                 problems.append(
                     f"{path}:{lineno}: the GUI imports the Core. It must reach the "
                     f"Core by executing /usr/bin/steamtrain instead, so the window "
-                    f"and the systemd timer cannot drift apart.")
+                    f"and the command line cannot drift apart.")
     return problems
 
 

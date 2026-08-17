@@ -582,7 +582,7 @@ fn cmd_status(args: &CommonArgs, io: &mut Io, deps: &Deps) -> Result<i32, CliErr
 /// Execute planned changes and close the stream with the run outcome.
 ///
 /// A guardrail refusal exits 0, not non-zero: Steam being open is the expected
-/// case, and the timer must not record a failure for it.
+/// case, and a caller running this on a schedule must not see a failure for it.
 fn write_json(
     out: &mut Emitter,
     root: &Path,
@@ -685,7 +685,7 @@ fn cmd_apply(args: &ApplyArgs, io: &mut Io, deps: &Deps) -> Result<i32, CliError
             );
             Ok(0)
         }
-        // Expected condition; the timer retries later.
+        // Expected condition; a scheduled run retries later.
         Err(ApplyError::SteamRunning(message)) => {
             let _ = writeln!(out.writer(), "NOTE: {message}");
             Ok(0)
@@ -1055,8 +1055,8 @@ fn setup_interact(
     }
     let _ = writeln!(
         out.writer(),
-        "Nothing is written to Steam yet — the next `steamtrain apply` (or timer run) \
-         uses it; restart Steam afterwards to see the options in the UI."
+        "Nothing is written to Steam yet — the next `steamtrain apply` uses it; \
+         restart Steam afterwards to see the options in the UI."
     );
     0
 }

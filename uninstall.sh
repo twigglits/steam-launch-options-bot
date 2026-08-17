@@ -1,6 +1,7 @@
 #!/bin/sh
-# Remove steamtrain: units, launcher, package. Steam configs are left as-is;
-# run `steamtrain revert` BEFORE uninstalling if you want options restored.
+# Remove steamtrain: binary, and any systemd units an older release installed.
+# Steam configs are left as-is; run `steamtrain revert` BEFORE uninstalling if
+# you want options restored.
 set -eu
 
 systemctl --user disable --now steamtrain.timer 2>/dev/null || true

@@ -10,14 +10,16 @@ never open. Doctor findings are therefore evaluated before parity.
 import sys
 from pathlib import Path
 
+from PyQt6.QtCore import QSettings
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox
 
-from . import __version__, client
+from . import __version__, client, system
 from .window import FirstRunDialog, MainWindow, MigrationDialog
 
 ICON_NAME = "steamtrain"
 LEGACY_SHADOWING = "legacy-install-shadowing"
+LEGACY_TIMER_KEY = "legacy_timer_disabled"
 
 
 def load_icon():
@@ -38,6 +40,21 @@ def _fatal(message, detail=""):
         box.setInformativeText(detail)
     box.exec()
     return 1
+
+
+def migrate_legacy_timer(settings=None):
+    """Switch off the systemd timer older releases installed. Once, ever.
+
+    That timer would keep applying options with this window shut, which is the
+    one thing this design promises cannot happen. Recorded as done afterwards
+    so a unit the user later writes under the same name is left alone.
+    """
+    settings = settings or QSettings()
+    if settings.value(LEGACY_TIMER_KEY, False, type=bool):
+        return False
+    system.disable_legacy_timer()
+    settings.setValue(LEGACY_TIMER_KEY, True)
+    return True
 
 
 def check_core():
@@ -131,8 +148,13 @@ def main(argv=None):
     argv = list(sys.argv if argv is None else argv)
     app = QApplication(argv)
     app.setApplicationName("steamtrain")
+    # Names the QSettings file (~/.config/steamtrain/steamtrain.conf), which is
+    # where the one-shot legacy-timer migration below records that it ran.
+    app.setOrganizationName("steamtrain")
     app.setDesktopFileName("steamtrain")
     app.setWindowIcon(load_icon())
+
+    migrate_legacy_timer()
 
     _, error = check_core()
     if error:
@@ -160,9 +182,8 @@ def main(argv=None):
     if degraded_reason:
         window.set_degraded(degraded_reason)
 
-    # Closing the window quits: steamtrain keeps no background presence of its
-    # own. The systemd timer is the only thing that outlives this process, and
-    # the window says whether it is running.
+    # Closing the window quits, and quitting is the whole story: nothing of
+    # steamtrain outlives this process, scheduled runs included.
     window.quitRequested.connect(app.quit)
     window.show()
 

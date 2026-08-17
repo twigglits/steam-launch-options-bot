@@ -1,4 +1,6 @@
-# Core package: CLI, rule engine, systemd user units.
+# Core package: CLI and rule engine. One file in /usr/bin and nothing else
+# executable — no units, because nothing schedules runs but the settings window
+# in the steamtrain-gui package, and only while it is open.
 #
 # One config, every format. One variable drives it:
 #
@@ -50,14 +52,6 @@ contents:
     dst: /usr/bin/steamtrain
     file_info:
       mode: 0755
-
-  # Shipped, never enabled. Activation is per-user and happens only when the
-  # user asks for it: a system package must not schedule writes to every
-  # account's Steam configuration.
-  - src: ./systemd/steamtrain.service
-    dst: /usr/lib/systemd/user/steamtrain.service
-  - src: ./systemd/steamtrain.timer
-    dst: /usr/lib/systemd/user/steamtrain.timer
 
   - src: ./LICENSE
     dst: /usr/share/doc/steamtrain/LICENSE
